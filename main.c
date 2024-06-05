@@ -12,7 +12,7 @@ main()
     {
         for (n = 0; str[n] && str[n] != '\n'; n++);
         str[n] = 0;
-        n = parse_charset(str);
+        n = parse_charset(str, 0, NULL);
         printf(
             "%s : %s\n",
             str,

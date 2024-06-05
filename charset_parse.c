@@ -19,17 +19,21 @@ enum mcset_fsm_state_e
     MCSET_FSM_BODY = 0,
     MCSET_FSM_EXIT,
     MCSET_FSM_RANGE,
+    MCSET_FSM_RANGE_ORDERED,
     MCSET_FSM_ESC,
     MCSET_FSM_CHAR
 };
 
 enum charset_fsm_state_e
 {
-    CS_FSM_EXIT = 0,
+    CS_FSM_DERIV_ISNULL =0,
+    CS_FSM_SET_DERIV,
+    CS_FSM_EXIT ,
     CS_FSM_ALPHABET_SET,
     CS_FSM_ESC_SEQ,
     CS_FSM_MULTICHAR_SET,
-    CS_FSM_SINGLECHAR_SET
+    CS_FSM_SINGLECHAR_SET,
+    CS_FSM_SINGLECHAR_DERIV_E
 };
 
 enum escape_seq_mask_e
@@ -49,7 +53,6 @@ enum mcset_fsm_range_state_e
     MCSET_RANGE_CHAR,   
     MCSET_RANGE_ESC_ISVALID,
     MCSET_RANGE_HYPHEN,
-    MCSET_RANGE_ORDER,
 };
 
 typedef enum mcset_fsm_state_e mcset_fsm_state_t;
@@ -58,6 +61,7 @@ typedef enum escape_seq_mask_e escape_seq_mask_t;
 typedef enum charset_fsm_state_e charset_fsm_state_t;
 typedef enum utf8_codepoint_fsm_state_e utf8_codepoint_fsm_state_t;
 
+static const char * const empty_str = "";
 
 uint32_t 
 parse_utf8_codepoint(
@@ -76,16 +80,12 @@ parse_multichar_set(
     const unsigned char * const restrict str
 );
 
-uint32_t
-parse_charset(
-    const unsigned char * const restrict str
-);
 
 uint32_t
 parse_mcset_range(
-    const unsigned char * const restrict str
+    const unsigned char * const restrict str,
+    uint32_t *cp0, uint32_t *cp1 /* NONNULL */
 );
-
 
 uint8_t 
 isreserved(const uint32_t cp);
@@ -168,21 +168,28 @@ top:
 
 uint32_t
 parse_charset(
-    const unsigned char * const restrict str
+    const unsigned char * const restrict str,
+    uint32_t const dparam, const char ** deriv
 ){
     uint32_t  cp, l = 0;
+    const char *d;
     charset_fsm_state_t state;
-
     state = (!!str) * CS_FSM_ALPHABET_SET;
-
 top:
     switch (state)
     {
+
+    case CS_FSM_DERIV_ISNULL:
+        state = CS_FSM_SET_DERIV + (deriv == NULL);
+        goto top;
+    case CS_FSM_SET_DERIV:
+        *deriv = d;
     case CS_FSM_EXIT:
         return l;
     case CS_FSM_ALPHABET_SET:
         l = parse_utf8_codepoint(str, &cp);
         state = (l!=0 && cp != '.') * CS_FSM_ESC_SEQ;
+        d=empty_str;
         goto top;
     case CS_FSM_ESC_SEQ:
         l = parse_escape_seq(str, NULL);
@@ -196,7 +203,13 @@ top:
         l = parse_utf8_codepoint(str, &cp);
         l *= (cp != 0);
         l *= (!isreserved(cp));
-        return l;
+        d = NULL;
+        state = (l!= 0 && cp==dparam) * CS_FSM_SINGLECHAR_DERIV_E;
+        goto top;
+    case CS_FSM_SINGLECHAR_DERIV_E:
+        d=empty_str;
+        state = CS_FSM_EXIT;
+        goto top;
     }
 
 }
@@ -252,7 +265,8 @@ parse_multichar_set(
     const unsigned char * const restrict str
 ){
 
-    uint32_t i, cp, l = 0;
+    uint32_t i = 0, cp, l = 0;
+    uint32_t rcp0, rcp1;
     mcset_fsm_state_t state;
 
     l = parse_utf8_codepoint(str, &cp);
@@ -266,6 +280,7 @@ parse_multichar_set(
     default:
        return 0;
     }
+    state = (i==0) + MCSET_FSM_BODY;
 
     switch (cp)
     {
@@ -291,9 +306,13 @@ top:
     case MCSET_FSM_EXIT:
         return l;
     case MCSET_FSM_RANGE:
-        i = parse_mcset_range(str+l);
-        state = (!i) * MCSET_FSM_ESC;
+        i = parse_mcset_range(str+l, &rcp0, &rcp1);
+        state = (i==0) + MCSET_FSM_RANGE_ORDERED;
         l += i;
+        goto top;
+    case MCSET_FSM_RANGE_ORDERED:
+        l *= (rcp0 <= rcp1);
+        state = (l==0) + MCSET_FSM_BODY;
         goto top;
     case MCSET_FSM_ESC:
         i = parse_escape_seq(str+l, NULL);
@@ -312,16 +331,17 @@ top:
 
 uint32_t
 parse_mcset_range(
-    const unsigned char * const restrict str
+    const unsigned char * const restrict str,
+    uint32_t *cp0, uint32_t *cp1 /* NONNULL */
 )
 {
 
-    uint32_t l =0, i=0, cp0 = 0, cp1 = 0;
+    uint32_t l =0, i=0; 
     uint32_t *cp;
     mcset_fsm_range_state_t state, char_exit;
 
     state = MCSET_RANGE_ESC;
-    cp = &cp0;
+    cp = cp0;
     char_exit = MCSET_RANGE_HYPHEN;
 top:
     switch (state)
@@ -345,16 +365,13 @@ top:
         l *= (state!=0);
         goto top;
     case MCSET_RANGE_HYPHEN:
-        cp = &cp1;
+        cp = cp1;
         i = parse_utf8_codepoint(str+l, cp);
         l += i;
         l *= i!=0 && *cp=='-';
         state = (l!=0) * MCSET_RANGE_ESC;
-        char_exit = MCSET_RANGE_ORDER;
+        char_exit = MCSET_RANGE_EXIT;
         goto top;
-    case MCSET_RANGE_ORDER:
-        l *= (cp1 >= cp0);
-        return l;
     }
 }
 
