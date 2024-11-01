@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#include "parse.h"
 enum utf8_codepoint_fsm_state_e
 {
     UTF8_FSM_FAIL = 0,
@@ -297,7 +298,7 @@ parse_escape_seq(
         cond = dparam==e;
         break;
     }
-    *dlut[derive!=NULL]  = nullable_lut[(cond && *derive==NULL)];
+    *dlut[derive!=NULL]  = nullable_lut[cond];
     return l;
 }
 
@@ -332,16 +333,18 @@ parse_multichar_set(
     switch (cp)
     {
     case '^':
-        inv = 0;
+        inv = 1;
+        l+=i;
         i = parse_utf8_codepoint(str+l, &cp);
         l *= (i!= 0);
-        state = (i==0) + MCSET_FSM_BODY;
-        l +=i;
+        state = (i==0 || cp==']') + MCSET_FSM_BODY;
+        l += i * (cp==']');
+        *derive = nullable_lut[cp==']'];
         break;
     case 0:
         return 0;
     default:
-        inv = 1;
+        inv = 0;
         break;
     }
 
@@ -354,8 +357,6 @@ top:
         l *= (cp != 0);
         goto top;
     case MCSET_FSM_EXIT:
-        cond |= *derive!=NULL;
-        *derive = nullable_lut[cond ^ inv];
         return l;
     case MCSET_FSM_RANGE:
         i = parse_mcset_range(str+l, &rcp0, &rcp1);
@@ -365,13 +366,15 @@ top:
     case MCSET_FSM_RANGE_ORDERED:
         l *= (rcp0 <= rcp1);
         state = (l==0) + MCSET_FSM_BODY;
-        cond = (dparam>=rcp0 && dparam <=rcp1 && state == MCSET_FSM_BODY);
+        cond = (dparam>=rcp0 && dparam <=rcp1);
+        *derive = nullable_lut[(cond ^ inv)  && l!=0 || *derive!=NULL];
         goto top;
     case MCSET_FSM_ESC:
-        i = parse_escape_seq(str+l, NULL, dparam, &d);
+        i = parse_escape_seq(str+l, &cp, dparam, &d);
         state = (i==0) * MCSET_FSM_CHAR;
         l += i;
         cond = (d!=NULL);
+        *derive = nullable_lut[(cond ^ inv) && i!=0 || *derive!=NULL];
         goto top;
     case MCSET_FSM_CHAR:
         i = parse_utf8_codepoint(str+l, &cp);
@@ -379,7 +382,8 @@ top:
         l*= (i!=0);
         cp *= (i!=0);
         state = (i==0 || cp == '\\' || cp ==']') + MCSET_FSM_BODY;
-        cond =  (cp==dparam && *derive==NULL && state == MCSET_FSM_BODY);
+        cond = (cp==dparam);
+        *derive = nullable_lut[(cond ^ inv) && state == MCSET_FSM_BODY || *derive!=NULL];
         goto top;
     }
 }
@@ -430,3 +434,34 @@ top:
     }
 }
 
+uint32_t
+parse_token(
+    const unsigned char * const restrict str,
+    parse_tolken_t * const restrict token
+)
+{
+    uint32_t l =0, i=0; 
+    switch(str[l])
+    {
+    case '(':
+        *token = PARSE_LPAREN;
+        return l+1;
+    case ')' :
+        *token = PARSE_RPAREN;
+        return l+1;
+    case '*':
+        *token = PARSE_KLEEN;
+       return l+1;
+    case '+':
+       *token = PARSE_PLUS;
+       return l+1;
+    case '|':
+       *token = PARSE_ALTERNATION;
+       return l+1;
+    default:
+        break;
+    }
+    i = parse_charset(str +l);
+
+}
+  
