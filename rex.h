@@ -657,120 +657,6 @@ rex_parse_charset_str(
     return cpi;
 }
 
-int 
-rex_emit(
-    const unsigned char * i_tok_str,
-    const REX_SIZE_T i_tok_str_sz,
-    const rex_token_t i_tok,
-    rex_instruction_t *o_inst,
-    REX_SIZE_T *l_sz,
-    REX_SIZE_T *r_sz
-)
-/* TODO: Can I store original position of generated code
- * and update all of these at once after the compile pass? */
-#define REX_EMIT_UPDATE_ALL_POINTERS(side, diff)               \
-    for (i = 0; i < *side##_sz; i++) switch(o_inst[i].op) {    \
-    case REX_INST_SPLIT: o_inst[i].y+=diff; /* FALLTHROUGH */  \
-    case REX_INST_JUMP: o_inst[i].x+=diff;  /* FALLTHROUGH */  \
-    default: break; }                   
-{
-    REX_SIZE_T i;
-    switch(i_tok)
-    {
-    case REX_PARSE_TOKEN_RPAREN:
-    case REX_PARSE_TOKEN_NULL:
-        return 1;
-    case REX_PARSE_TOKEN_KLEEN:
-        if (!*l_sz || *r_sz) return 1;
-
-        /* Move lhs 1 instruction forward */
-        REX_EMIT_UPDATE_ALL_POINTERS(l, 1);
-        memmove(o_inst+1, o_inst, *l_sz * sizeof(rex_instruction_t));
-
-        /* Emit split L2, l3 */
-        o_inst[0] = (rex_instruction_t){
-            1,
-            *l_sz+2,
-            REX_INST_SPLIT
-        };
-        /* Emit split jump L1 */
-        o_inst[*l_sz+1] = (rex_instruction_t){
-            0,
-            0,
-            REX_INST_SPLIT
-        };
-        *l_sz += 2;
-        break;
-    case REX_PARSE_TOKEN_PLUS:
-        if (!*l_sz || *r_sz) return 1;
-        o_inst[*l_sz] = (rex_instruction_t){
-            0,
-            *l_sz+1,
-            REX_INST_SPLIT
-        };
-        *l_sz += 1;
-        break;
-    case REX_PARSE_TOKEN_QUESTION:
-        if (!l_sz || r_sz) return 1;
-
-        /* Move lhs 1 instruction forward */
-        REX_EMIT_UPDATE_ALL_POINTERS(l, 1);
-        memmove(o_inst+1, o_inst, *l_sz * sizeof(rex_instruction_t));
-
-        /* Emit split L1, l2 */
-        o_inst[0] = (rex_instruction_t){
-            1,
-            1 + *l_sz,
-            REX_INST_SPLIT
-        };
-        *l_sz += 1;
-        break;
-    case REX_PARSE_TOKEN_ALTERNATION:
-        if (!*l_sz || !*r_sz) return 1;
-        
-        /* Move rhs 2 instruction forward */
-        REX_EMIT_UPDATE_ALL_POINTERS(r, 2);
-        memmove(o_inst+*l_sz+2, o_inst+*l_sz, *r_sz * sizeof(rex_instruction_t));
-
-        /* Emit Jump L3 */
-        o_inst[*l_sz+1] = (rex_instruction_t){
-            *l_sz + 2 + *r_sz,
-            0,
-            REX_INST_JUMP
-        };
-
-        /* Move lhs 1 instruction forward */
-        REX_EMIT_UPDATE_ALL_POINTERS(l, 1);
-        memmove(o_inst+1, o_inst, *l_sz * sizeof(rex_instruction_t));
-
-        /* Emit split L1, l2 */
-        o_inst[0] = (rex_instruction_t){
-            1,
-            *l_sz + 2,
-            REX_INST_SPLIT
-        };
-
-        *l_sz += *r_sz + 2;
-        *r_sz = 0;
-        break;
-
-    case REX_PARSE_TOKEN_CHARSET_STR:
-        if (!*l_sz)
-            return !rex_parse_charset_str(i_tok_str, i_tok_str_sz, o_inst, l_sz);
-        if (*r_sz) return 1;
-        return !rex_parse_charset_str(i_tok_str, i_tok_str_sz, o_inst+*l_sz, r_sz);
-    case REX_PARSE_TOKEN_LPAREN:
-        /* TODO: Capture Groups */
-        break;
-    case REX_PARSE_TOKEN_CONCAT:
-        *l_sz += *r_sz;
-        *r_sz = 0;
-        break;
-    }
-    return 0;
-}
-#undef REX_EMIT_UPDATE_ALL_POINTERS
-
 int
 rex_compile_regex(
     const unsigned char * i_regex_str,
@@ -783,14 +669,12 @@ rex_compile_regex(
     int r;
     REX_SIZE_T i, j, k;
     REX_SIZE_T stri, stack_sz;
-    REX_SIZE_T l_sz, r_sz;
     rex_token_t tok, tok_tmp;
     uint8_t * const stack = io_compiler->mem;
+    uint8_t * bottom = stack + io_compiler->mem_sz-1;
 
     stri = 0;
     stack_sz = 0;
-    l_sz = 0;
-    r_sz = 0;
 
     /* Check if output has enough space */
     i = 0;
@@ -828,65 +712,45 @@ rex_compile_regex(
         {
         case REX_PARSE_TOKEN_CHARSET_STR:
             /* EMIT TOK */
-            r = rex_emit(
-                i_regex_str + stri,
-                i_regex_str_sz - stri,
-                tok,
-                o_inst,
-                &l_sz,
-                &r_sz
-            );
-            if (r) return r;
+            if (stack + stack_sz >= bottom + i + 1) return 1;
+            *bottom = 0;
+            bottom--;
+            memcpy(bottom - i, i_regex_str+stri, i);
+            bottom -= i;
             break;
         case REX_PARSE_TOKEN_LPAREN:
             /* PUSH TO OPSTACK */
-            if (stack_sz >= io_compiler->mem_sz) return 1;
+            if (stack + stack_sz >= bottom) return 1;
             stack[stack_sz++] = tok;
             break;
         case REX_PARSE_TOKEN_RPAREN:
-            for (;tok == REX_PARSE_TOKEN_LPAREN;)
+            for (;tok != REX_PARSE_TOKEN_LPAREN;)
             {
                 if(stack_sz == 0) return 2;
+                if (stack + stack_sz >= bottom + 1) return 1;
                 /* EMIT TOP OF OPSTACK*/
-                r = rex_emit(
-                    i_regex_str + stri,
-                    i_regex_str_sz - stri,
-                    stack[stack_sz-1],
-                    o_inst,
-                    &l_sz,
-                    &r_sz
-                );
-                if (r) return r;
+                *bottom = stack[stack_sz];
                 /* POP OPSTACK*/
                 stack_sz--;
             }
             break;
         default:
-            while(stack_sz)
-            {
             /* WHILE STACK_TOP PRECEDENCE > TOK */
-                if (stack[stack_sz-1] <= tok) break;
+            if (stack_sz) while(stack[stack_sz-1] > tok)
+            {
+                if (stack + stack_sz >= bottom + 1) return 1;
                 /* EMIT TOP OF OPSTACK*/
-                r = rex_emit(
-                    i_regex_str + stri,
-                    i_regex_str_sz - stri,
-                    stack[stack_sz-1],
-                    o_inst,
-                    &l_sz,
-                    &r_sz
-                );
-                if (r) return r;
-
-                /* POP OPSTACK */
+                *bottom = stack[stack_sz];
+                /* POP OPSTACK*/
                 stack_sz--;
             }
             /* PUSH TOK TO OPSTACK */
-            if (stack_sz >= io_compiler->mem_sz) return 1;
+            if (stack + stack_sz >= bottom) return 1;
             stack[stack_sz++] = tok;
             
             break;
         } 
-        /* Handle Concat Insertion Using Lookahead */
+        /* Handle Implicit Concat Using Lookahead */
         rex_parse_token(i_regex_str+stri+i, i_regex_str_sz, &tok_tmp);
         switch(tok)
         {
@@ -898,29 +762,24 @@ rex_compile_regex(
             {
             case REX_PARSE_TOKEN_CHARSET_STR:
             case REX_PARSE_TOKEN_LPAREN:
-                /* Process Concat Token */
+                /* Prevent tree mangling due to implicit concat */
                 tok = REX_PARSE_TOKEN_CONCAT;
                 goto shunting_start;
+                if (r) return r;
             default:
                 break;
             }
         default:
             break;
         }
-    
     }
+
     for(;;)
     {
         /* EMIT TOP OF OPSTACK*/
-        r = rex_emit(
-            i_regex_str + stri,
-            i_regex_str_sz - stri,
-            stack[stack_sz-1],
-            o_inst,
-            &l_sz,
-            &r_sz
-        );
-        if (r) return r;
+        if (stack + stack_sz >= bottom + 1) return 1;
+        /* EMIT TOP OF OPSTACK*/
+        *bottom = stack[stack_sz];
         /* POP OPSTACK*/
         stack_sz--;
     }
