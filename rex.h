@@ -108,14 +108,14 @@ enum rex_parse_token_e
 };
 enum rex_emit_state_e
 {
-        REX_EMIT_TOKEN_CHARSET = REX_PARSE_TOKEN_CHARSET,
-        REX_EMIT_TOKEN_RPAREN = REX_PARSE_TOKEN_RPAREN,
-        REX_EMIT_TOKEN_LPAREN = REX_PARSE_TOKEN_LPAREN,
-        REX_EMIT_TOKEN_ALTERNATION = REX_PARSE_TOKEN_ALTERNATION,
-        REX_EMIT_TOKEN_CONCAT = REX_PARSE_TOKEN_CONCAT,
-        REX_EMIT_TOKEN_KLEEN = REX_PARSE_TOKEN_KLEEN,
-        REX_EMIT_TOKEN_QUESTION = REX_PARSE_TOKEN_QUESTION,
-        REX_EMIT_TOKEN_PLUS = REX_PARSE_TOKEN_PLUS,
+    REX_EMIT_TOKEN_CHARSET = REX_PARSE_TOKEN_CHARSET,
+    REX_EMIT_TOKEN_RPAREN = REX_PARSE_TOKEN_RPAREN,
+    REX_EMIT_TOKEN_LPAREN = REX_PARSE_TOKEN_LPAREN,
+    REX_EMIT_TOKEN_ALTERNATION = REX_PARSE_TOKEN_ALTERNATION,
+    REX_EMIT_TOKEN_CONCAT = REX_PARSE_TOKEN_CONCAT,
+    REX_EMIT_TOKEN_KLEEN = REX_PARSE_TOKEN_KLEEN,
+    REX_EMIT_TOKEN_QUESTION = REX_PARSE_TOKEN_QUESTION,
+    REX_EMIT_TOKEN_PLUS = REX_PARSE_TOKEN_PLUS,
 };
 /* REGEX COMPILER */
 enum rex_opcode_e
@@ -209,8 +209,8 @@ rex_ast_build(
 
 REX_SIZE_T
 rex_ast_sz(
-    uint8_t * stack,
-    REX_SIZE_T stack_sz
+    uint8_t * ast,
+    const uint8_t * const ast_floor
 );
 
 REX_SIZE_T
@@ -225,8 +225,12 @@ rex_ast_tostring(
     const rex_compiler_t * const i_compiler,
     unsigned char * o_str
 );
-
-
+int
+rex_ast_swap_lr(
+    uint8_t * ast_top,
+    const uint8_t * const ast_ceil,
+    const uint8_t * const ast_floor
+);
 
 static const REX_SIZE_T rex_child_node_lut[] =
 {
@@ -666,6 +670,43 @@ rex_parse_mcset_range(
 }
 
 int
+rex_ast_compile(
+    rex_compiler_t *io_compiler,
+    rex_instruction_t * o_inst
+)
+{
+    uint8_t *ast_top = io_compiler->stack_top;
+    const uint8_t * const ast_ceil = io_compiler->mem;
+    const uint8_t * const ast_floor = ast_ceil + io_compiler->mem_sz;
+
+#define REX_AST_INSERT(val, type, pos)                              \
+    if (ast_top - sizeof(type) < ast_ceil) return 1;                \
+    memmove(ast_top - sizeof(type) - 1, ast_top+pos, sizeof(type));     \
+    
+
+    switch((rex_token_t)*ast_top)
+    {
+    case REX_PARSE_TOKEN_CONCAT:
+        rex_ast_swap_lr(ast_top, ast_ceil, ast_floor);
+        break;
+    case REX_PARSE_TOKEN_ALTERNATION:
+
+    case REX_PARSE_TOKEN_KLEEN:
+    case REX_PARSE_TOKEN_LPAREN:
+    case REX_PARSE_TOKEN_QUESTION:
+    case REX_PARSE_TOKEN_PLUS:
+
+    case REX_PARSE_TOKEN_NULL:
+    case REX_PARSE_TOKEN_RPAREN:
+    case REX_PARSE_TOKEN_CHARSET:
+        /* Should not be possible */
+        return 2;
+    default:
+    }
+    
+}
+
+int
 rex_ast_build(
     const unsigned char * i_regex_str,
     const REX_SIZE_T i_regex_str_sz,
@@ -677,7 +718,7 @@ rex_ast_build(
     REX_SIZE_T stri, stack_sz;
     rex_token_t tok, tok_tmp;
     uint8_t * const stack = io_compiler->mem;
-    uint8_t * output_stack_top = stack + io_compiler->mem_sz-1;
+    uint8_t * output_stack_top = stack + io_compiler->mem_sz;
 
     stri = 0;
     stack_sz = 0;
@@ -695,38 +736,35 @@ rex_ast_build(
             return 1;
         case REX_PARSE_TOKEN_CHARSET:
             /* EMIT TOK */
-            if (stack + stack_sz >= output_stack_top - i - 1) return 1;
-            *output_stack_top = 0;
-            output_stack_top--;
-            memcpy(output_stack_top - (i-1), i_regex_str+stri, i);
+            if (stack + stack_sz >= output_stack_top - i) return 1;
+            *--output_stack_top = 0;
+            memcpy(output_stack_top - i, i_regex_str+stri, i);
             output_stack_top -= i;
             break;
         case REX_PARSE_TOKEN_LPAREN:
             /* PUSH TO OPSTACK */
-            if (stack + stack_sz >= output_stack_top) return 1;
+            if (stack + stack_sz + 1 >= output_stack_top) return 1;
             stack[stack_sz++] = tok;
             break;
         case REX_PARSE_TOKEN_RPAREN:
             for (;tok != REX_PARSE_TOKEN_LPAREN;)
             {
                 if(stack_sz == 0) return 2;
-                if (stack + stack_sz >= output_stack_top - 1) return 1;
+                if (stack + stack_sz >= output_stack_top) return 1;
                 /* POP AND EMIT TOP OF OPSTACK*/
-                *output_stack_top = stack[--stack_sz];
-                output_stack_top--;
+                *--output_stack_top = stack[--stack_sz];
             }
             break;
         default:
             /* WHILE STACK_TOP PRECEDENCE > TOK */
             if (stack_sz) while(stack[stack_sz-1] > tok)
             {
-                if (stack + stack_sz >= output_stack_top - 1) return 1;
+                if (stack + stack_sz >= output_stack_top) return 1;
                 /* POP AND EMIT TOP OF OPSTACK*/
-                *output_stack_top = stack[--stack_sz];
-                output_stack_top--;
+                *--output_stack_top = stack[--stack_sz];
             }
             /* PUSH TOK TO OPSTACK */
-            if (stack + stack_sz >= output_stack_top) return 1;
+            if (stack + stack_sz + 1 >= output_stack_top) return 1;
             stack[stack_sz++] = tok;
             
             break;
@@ -758,10 +796,10 @@ rex_ast_build(
 
     for(;stack_sz;)
     {
-        if (stack + stack_sz >= output_stack_top - 1) return 1;
+        /* No size check needed. 
+         * As output stack increases Input stack decreases */
         /* POP AND EMIT TOP OF OPSTACK*/
-        *output_stack_top = stack[--stack_sz];
-        output_stack_top--;
+        *--output_stack_top = stack[--stack_sz];
     }
     io_compiler->stack_top = output_stack_top;
     return 0;
@@ -770,19 +808,17 @@ rex_ast_build(
 int
 rex_ast_swap_lr(
     uint8_t * ast_top,
-    uint8_t * ast_ceil,
-    REX_SIZE_T ast_cap
-
+    const uint8_t * const ast_ceil,
+    const uint8_t * const ast_floor
 )
 {
     REX_SIZE_T l, r, i;
-    REX_SIZE_T ast_sz = ast_cap - (ast_top - ast_ceil);
     uint8_t t;
-    r = rex_ast_sz(ast_top, ast_sz);
+    r = rex_ast_sz(ast_top, ast_floor);
     if(!r) return 2;
-    l = rex_ast_sz(ast_top+r, ast_sz-r);
+    l = rex_ast_sz(ast_top+r, ast_floor);
     if(!l) return 2;
-    if (ast_cap> ast_sz+r) 
+    if (ast_top + r < ast_floor) 
     {
         memmove(ast_top - r, ast_top, r+l);
         memmove(ast_top, ast_top-r, r);
@@ -805,12 +841,12 @@ rex_ast_swap_lr(
 REX_SIZE_T
 rex_ast_sz(
     uint8_t * ast,
-    REX_SIZE_T ast_sz
+    const uint8_t * const ast_floor
 )
 {
     REX_SIZE_T tree_sz = 0, i, j, leaves;
     leaves = 0;
-    for (i =0; i < ast_sz; i++)
+    for (i =0; ast+i < ast_floor; i++)
     {
         switch((rex_token_t)ast[i])
         {
@@ -833,7 +869,8 @@ rex_ast_sz(
             break;
         default:
             if (!leaves) return 0;
-            j = rex_parse_charset(ast+i, ast_sz, NULL, NULL);
+            /* TODO: Reconcile SIZE_MAX w REX_SIZE_T */
+            j = rex_parse_charset(ast+i, SIZE_MAX, NULL, NULL);
             if (!j) return 0;
             tree_sz += j + 1;
             leaves--;
@@ -854,7 +891,7 @@ rex_ast_tostring(
     const uint8_t *ast_ceil = i_compiler->mem;
     const uint8_t *ast_floor = ast_ceil + i_compiler->mem_sz;
     stri=0;
-    for (i = 1; ast_top+i < ast_floor; i++)
+    for (i = 0; ast_top+i < ast_floor; i++)
     {
         /* If it is a parse token */
         if (ast_top[i] >= REX_PARSE_TOKEN_CHARSET)
