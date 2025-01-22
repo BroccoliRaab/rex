@@ -10,6 +10,7 @@ int main(int argc, char ** argv)
     rex_compiler_t rexc;
     uint8_t mem[1024];
     unsigned char ast_str[512];
+    rex_instruction_t prog[128];
     int r;
     rexc.mem = mem;
     rexc.mem_sz = 1024;
@@ -26,6 +27,12 @@ int main(int argc, char ** argv)
         ast_str
     );
     fputs((const char * )ast_str, stdout);
+    r = rex_ast_compile(
+        &rexc,
+        0,
+        prog
+    );
+    if (r) return r;
 
     return r;
 }
