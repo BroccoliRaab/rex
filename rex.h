@@ -410,51 +410,41 @@ rex_parse_charset(
 ){
     uint32_t  cp = 0;
     REX_SIZE_T l = 0;
-    rex_instruction_t out;
-    rex_charset_fsm_state_t state;
-    state = REX_TRY(!!str, REX_CS_FSM_ALPHABET_SET);
+    if (len == 0) return 0;
     if (o_inst_sz) *o_inst_sz = 0;
 
-    for(;;) switch (state)
+    switch(str[0])
     {
-    case REX_CS_FSM_INST_ISNULL:
-        state = REX_CHOOSE(o_inst!=NULL && l!=0, REX_CS_FSM_SET_INST);
-        break;
-    case REX_CS_FSM_SET_INST:
-        *o_inst = out;
-    /*FALLTHROUGH*/
-    case REX_CS_FSM_EXIT:
-        return l;
-    case REX_CS_FSM_ALPHABET_SET:
-        l = rex_parse_utf8_codepoint(str, len, &cp);
-        l = REX_TRY(cp != 0, l);
-        state = REX_TRY(l!=0 && cp != '.' && cp != 0, REX_CS_FSM_ESC_SEQ);
-        out.op = REX_INST_CHARSET_TEST_IMM;
-        out.x = REX_CHAR_MIN;
-        out.y = REX_CHAR_MAX;
-        if (o_inst_sz && l) *o_inst_sz = 1;
-        break;
-    case REX_CS_FSM_ESC_SEQ:
+    case '\\':
         l = rex_parse_escape_seq(str, len, &cp, o_inst, o_inst_sz);
-        state = REX_TRY(!l, REX_CS_FSM_MULTICHAR_SET);
-        out.op = REX_INST_CHARSET_TEST;
+        if (!l) return 0;
+        if (o_inst && o_inst_sz) o_inst[*o_inst_sz].op = REX_INST_CHARSET_TEST;
+        if (o_inst_sz) ++*o_inst_sz;
         break;
-    case REX_CS_FSM_MULTICHAR_SET:
+    case '.':
+        if (o_inst && o_inst_sz) o_inst[*o_inst_sz] = (rex_instruction_t) {
+            REX_CHAR_MIN, REX_CHAR_MAX,
+            REX_INST_CHARSET_TEST_IMM
+        };
+        if (o_inst_sz) ++*o_inst_sz;
+        break;
+    case '[':
         l = rex_parse_multichar_set(str, len, o_inst, o_inst_sz);
-        state = REX_TRY(!l, REX_CS_FSM_SINGLECHAR_SET);
+        if (!l) return 0;
         break;
-    case REX_CS_FSM_SINGLECHAR_SET:
+    case 0:
+        return 0;
+    default:
         l = rex_parse_utf8_codepoint(str, len, &cp);
-        l = REX_TRY((cp != 0), l);
-        l = REX_TRY(!rex_isreserved(cp), l);
-        out.op = REX_INST_CHARSET_TEST_IMM;
-        out.x = cp;
-        out.y = cp;
-        state = REX_TRY(l == 0, REX_CS_FSM_EXIT);
-        if (o_inst_sz && l) *o_inst_sz = 1;
+        if (!l &&!rex_isreserved(cp)) return 0;
+        if (o_inst && o_inst_sz) o_inst[*o_inst_sz] = (rex_instruction_t) {
+            cp, cp,
+            REX_INST_CHARSET_TEST_IMM
+        };
+        if (o_inst_sz) ++*o_inst_sz;
         break;
     }
-
+    return l;
 }
 
 REX_SIZE_T
@@ -465,7 +455,7 @@ rex_parse_escape_seq(
     rex_instruction_t *o_inst, REX_SIZE_T * o_inst_sz
 )
 {
-    REX_SIZE_T l, i, j;
+    REX_SIZE_T l, i;
     uint32_t e, seq;
     const rex_instruction_t *precomp;
     rex_instruction_t out;
@@ -491,8 +481,8 @@ rex_parse_escape_seq(
         break;
     case 'W':
         seq = REX_ESC_SEQ_W; 
-        precomp = rex_compiled_word_set;
-        i = rex_compiled_word_set_sz;
+        precomp = rex_compiled_word_inv_set;
+        i = rex_compiled_word_set_inv_sz;
         break;
     case 's':
         seq = REX_ESC_SEQ_s; 
@@ -501,8 +491,8 @@ rex_parse_escape_seq(
         break;
     case 'S':
         seq = REX_ESC_SEQ_S; 
-        precomp = rex_compiled_whitespace_set;
-        i = rex_compiled_whitespace_set_sz;
+        precomp = rex_compiled_whitespace_inv_set;
+        i = rex_compiled_whitespace_inv_set_sz;
         break;
     case 'd':
         seq = REX_ESC_SEQ_d; 
@@ -511,8 +501,8 @@ rex_parse_escape_seq(
         break;
     case 'D':
         seq = REX_ESC_SEQ_D; 
-        precomp = rex_compiled_digit_set;
-        i = rex_compiled_digit_set_sz;
+        precomp = rex_compiled_digit_inv_set;
+        i = rex_compiled_digit_inv_set_sz;
         break;
     case 0:
         return l;
@@ -526,7 +516,8 @@ rex_parse_escape_seq(
         break;
     }
     if (o_inst_sz) *o_inst_sz += i;
-    if (o_inst) for(j = 0; j < i; j++) o_inst[j] = precomp[j];
+    if (o_inst) memcpy(o_inst, precomp, i*sizeof(rex_instruction_t));
+    
     if (e) *esc_seq = seq;
     
     return l;
@@ -585,8 +576,7 @@ rex_parse_multichar_set(
     {
     case REX_MCSET_FSM_BODY:
         emit_ret = REX_CHOOSE(cp==']' || cp == 0, REX_MCSET_FSM_EXIT);
-        state = REX_CHOOSE(cp != 0 && o_inst != 0, REX_MCSET_FSM_EMIT);
-        l += REX_TRY(cp==']', i);
+        state = REX_CHOOSE(cp == ']' && o_inst != 0, REX_MCSET_FSM_EMIT);
         l = REX_TRY(cp != 0, l);
         out.op = REX_NCHOOSE(inv, REX_INST_CHARSET_TEST);
         break;
@@ -615,9 +605,9 @@ rex_parse_multichar_set(
         l += i;
         l = REX_TRY(i!=0, l);
         cp = REX_TRY(i!=0, cp);
-        emit_ret = REX_NCHOOSE(i==0 || cp == '\\' || cp ==']', REX_MCSET_FSM_BODY);
+        emit_ret = REX_NCHOOSE(i==0 || cp == '\\', REX_MCSET_FSM_BODY);
         state = REX_NCHOOSE(
-            i==0 || cp == '\\' ||  o_inst == NULL,
+            i==0 || cp == '\\' ||  o_inst == NULL || cp == ']',
             REX_MCSET_FSM_EMIT
         );
         out.x = cp;
