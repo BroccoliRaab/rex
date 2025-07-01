@@ -1,99 +1,135 @@
 #include <stdint.h>
 #include <stddef.h>
-#include <string.h>
-/* REX_CFG
+
+/* THREAD SAFTEY */
+/* It is unsafe to access any REX_VM object from multiple threads concurrently 
+ * In order to practice thread safety each thread will need to own its own REX_VM object 
+ * It IS SAFE to pass the same program to different REX_VM objects in different threads 
+ */
+
+/* INTERFACE */
+
+/* TYPES */
+typedef uint32_t rex_instruction_t;
+
+/* REX_VM ARCHITECTURE */
+/* 
+ * REX_VM is Virtual Machine that spawns multiple threads that are executed sequentially
+ * Each thread has its own set of registers
+ * Sequential thread execution allows prioritizing one code path over another
+ * This priority determines match disambiguation rules and allows lazy matching
+ * MATCH_SIZE and MATCH_FOUND are set and all threads halt when a match is found
+ * The max thread count spawned for any program is equal to the amount of instructions in the program
+ */
+
+/* UNIFORMS */
+/* MATCH_FOUND 
+ *      True if REX_VM has found a matching pattern in text
  *
+ * MATCH_SIZE
+ *      Holds the number of codepoints searched for pattern
  */
-#ifndef REX_BOOL_T
-#define REX_BOOL_T int
-#endif /* REX_BOOL_T */
 
-#ifndef REX_SIZE_T
-#define REX_SIZE_T size_t
-#endif /* REX_SIZE_T */
-
-#ifdef REX_IMPLEMENTATION
-
-/* REX_TRY
- * If condition is true return x
- * If condition is false return 0
+/*REGISTERS*/
+/*
+ * PROGRAM_COUNTER
+ *      Stores the current index of vm instruction
+ *      Initialized to (~0) for a halted thread
+ * RANGE_MAX_VALUE
+ *      Stores the max value of a code point range
  */
-#define REX_TRY(cond, x) ((cond) * (x))
-
-/* REX_CHOOSE
- * If condition is true return x 
- * If condition is false return x+1
+#define REX_INSTRUCTION(op, imm) (((op) << 24) & (imm))
+/* REX_VM INSTRUCTION SET */
+/*
+ * HALT_IMMEDIATE
+ *       ______________________
+ *      |8bit|      24 bit    |
+ *      -----------------------
+ *      | OP |        cp0     |
+ *      -----------------------
+ *      OP = 0b10000001
+ *      If current codepoint matches immediate value cp0 halt the thread
  */
-#define REX_CHOOSE(cond, x) ((!(cond)) + (x))
+#define REX_HALT_IMMEDIATE (0x81)
 
-/* REX_NCHOOSE
- * If condition is true return x+1 
- * If condition is false return x
+/* HALT_NOT_IMMEDIATE
+ *       ______________________
+ *      |8bit|      24 bit    |
+ *      -----------------------
+ *      | OP |        cp0     |
+ *      -----------------------
+ *      OP = 0b10000011
+ *      If current codepoint does not match immediate value cp0 halt the thread
+*/
+#define REX_HALT_NOT_IMMEDIATE (0x83)
+
+/* LOAD_RANGE_MAX_VAL
+ *       ______________________
+ *      |8bit|      24 bit    |
+ *      -----------------------
+ *      | OP |        cp1     |
+ *      -----------------------
+ *      OP = 0b11000010
+ *      Load the codepoint cp1 into the RANGE_MAX_VALUE register
+ *
+ * HALT_RANGE
+ *       ______________________
+ *      |8bit|      24 bit    |
+ *      -----------------------
+ *      | OP |        cp0     |
+ *      -----------------------
+ *      OP = 0b10000010
+ *      Current codepoint: cp
+ *      Codepoint range bottom immediate: cp0
+ *      Codepoint range top in register RANGE_MAX_VALUE: cp1
+ *      If cp0 <= cp <= cp1 halt the current thread
+ *
+ * MATCH
+ *       ______________________
+ *      |8bit|      24 bit    |
+ *      -----------------------
+ *      | OP |     unused     |
+ *      -----------------------
+ *      OP = 0b11111111
+ *      Set uniform MATCH_FOUND to true
+ *      Set unform  MATCH_SIZE to current codepoint index
+ *
+ * SPLIT
+ *       ______________________
+ *      |2bit|      30 bit    |
+ *      -----------------------
+ *      | OP |        pc1     |
+ *      -----------------------
+ *      OP = 0b01
+ *      Spawn a new thread with PROGRAM_COUNTER initialized to pc1
+ * JUMP
+ *       ______________________
+ *      |2bit|      30 bit    |
+ *      -----------------------
+ *      | OP |        pc1     |
+ *      -----------------------
+ *      OP = 0b00
+ *      Set this threads PROGRAM_COUNTER to pc1
+*/
+
+
+/* PARSERS */
+
+/* All parsers stop when the length of the string is exceded
+ * Strings are not expected to be NULL terminated unless otherwise stated
+ *
+ * All parsers return the amount of characters parsed
+ *      A return value 0 indicates a parse failure
+ *
+ * All parsers accept as the first two arguments:
+ *      i_str : The string to parse
+ *      i_len : the length of the string to parse
+ *
+ * Any further arguments are outputs of the parser
+ * All outputs may be NULL
  */
-#define REX_NCHOOSE(cond, x) ((cond) + (x))
 
-
-#define REX_CHAR_MIN (1)
-#define REX_CHAR_MAX (0x7FFFFFFF) /*TODO */
-
-
-/* REGEX PARSING */
-enum rex_utf8_codepoint_fsm_state_e
-{
-    REX_UTF8_FSM_FAIL = 0,
-    REX_UTF8_FSM_VALID_FIRST_BYTE,
-    REX_UTF8_FSM_CHAR_TAIL,
-    REX_UTF8_FSM_SUCCESS,
-    REX_UTF8_FSM_DECODE,
-    REX_UTF8_FSM_ASCII_CHAR,
-    REX_UTF8_FSM_CHAR,
-    REX_UTF8_FSM_CHECK_BYTE_ONE,
-    REX_UTF8_FSM_VALID_TAIL_BYTE,
-
-};
-enum rex_mcset_fsm_state_e
-{
-    REX_MCSET_FSM_BODY = 0,
-    REX_MCSET_FSM_EXIT,
-    REX_MCSET_FSM_RANGE,
-    REX_MCSET_FSM_RANGE_ORDERED,
-    REX_MCSET_FSM_ESC,
-    REX_MCSET_FSM_CHAR,
-    REX_MCSET_FSM_EMIT,
-    REX_MCSET_FSM_EMIT_RETURN,
-};
-
-enum rex_charset_fsm_state_e
-{
-    REX_CS_FSM_INST_ISNULL =0,
-    REX_CS_FSM_SET_INST,
-    REX_CS_FSM_EXIT ,
-    REX_CS_FSM_ALPHABET_SET,
-    REX_CS_FSM_ESC_SEQ,
-    REX_CS_FSM_MULTICHAR_SET,
-    REX_CS_FSM_SINGLECHAR_SET
-};
-
-enum rex_escape_seq_mask_e
-{
-    REX_ESC_SEQ_w = 1 << (0 + 24),
-    REX_ESC_SEQ_W = 1 << (1 + 24),
-    REX_ESC_SEQ_s = 1 << (2 + 24),
-    REX_ESC_SEQ_S = 1 << (3 + 24),
-    REX_ESC_SEQ_d = 1 << (4 + 24),
-    REX_ESC_SEQ_D = 1 << (5 + 24)
-};
-
-enum rex_mcset_fsm_range_state_e
-{
-    REX_MCSET_RANGE_EXIT = 0,
-    REX_MCSET_RANGE_ESC,
-    REX_MCSET_RANGE_CHAR,   
-    REX_MCSET_RANGE_ESC_ISVALID,
-    REX_MCSET_RANGE_HYPHEN,
-};
-
-enum rex_parse_token_e
+enum rex_token_e
 {
     REX_PARSE_TOKEN_NULL = 0,
     /* Illegal first byte for utf8 sequence */
@@ -106,224 +142,16 @@ enum rex_parse_token_e
     REX_PARSE_TOKEN_QUESTION,
     REX_PARSE_TOKEN_PLUS,
 };
-enum rex_emit_state_e
+typedef enum rex_token_e rex_token_t;
+
+/* Defines a range of codepoints */
+typedef struct rex_cp_range_s rex_cp_range_t;
+struct rex_cp_range_s
 {
-    REX_EMIT_TOKEN_CHARSET = REX_PARSE_TOKEN_CHARSET,
-    REX_EMIT_TOKEN_RPAREN = REX_PARSE_TOKEN_RPAREN,
-    REX_EMIT_TOKEN_LPAREN = REX_PARSE_TOKEN_LPAREN,
-    REX_EMIT_TOKEN_ALTERNATION = REX_PARSE_TOKEN_ALTERNATION,
-    REX_EMIT_TOKEN_CONCAT = REX_PARSE_TOKEN_CONCAT,
-    REX_EMIT_TOKEN_KLEEN = REX_PARSE_TOKEN_KLEEN,
-    REX_EMIT_TOKEN_QUESTION = REX_PARSE_TOKEN_QUESTION,
-    REX_EMIT_TOKEN_PLUS = REX_PARSE_TOKEN_PLUS,
-    REX_EMIT_ALTERNATION_INFIX,
-    REX_EMIT_ALTERNATION_SUFFIX,
-    REX_EMIT_QUESTION_SUFFIX,
-    REX_EMIT_KLEEN_SUFFIX,
-    REX_EMIT_PLUS_SUFFIX,
-};
-/* REGEX COMPILER */
-enum rex_opcode_e
-{
-    REX_INST_CHAR,             /* Match a codepoint range. Halt on mismatch */
-    REX_INST_CHARSET_OR,       /* Set CHARSET_BIT if match codepoint range */
-    REX_INST_CHARSET_TEST_IMM, /* Continue if match codepoint range. */
-    REX_INST_CHARSET_TEST,     /* Continue if CHARSET_BIT is set. */
-    REX_INST_CHARSET_NTEST,    /* Continue if CHARSET_BIT is unset. */
-    REX_INST_MATCH,            /* Halt with success status */ 
-    REX_INST_SPLIT,            /* Start new thread at x */
-    REX_INST_JUMP              /* Jump this thread to x */
+    uint32_t cp0, cp1;
 };
 
-typedef enum rex_parse_token_e rex_token_t;
-typedef enum rex_emit_state_e rex_emit_state_t;
-typedef enum rex_opcode_e rex_opcode_t;
-typedef enum rex_mcset_fsm_state_e rex_mcset_fsm_state_t;
-typedef enum rex_mcset_fsm_range_state_e rex_mcset_fsm_range_state_t;
-typedef enum rex_escape_seq_mask_e rex_escape_seq_mask_t;
-typedef enum rex_charset_fsm_state_e rex_charset_fsm_state_t;
-typedef enum rex_utf8_codepoint_fsm_state_e rex_utf8_codepoint_fsm_state_t;
-
-typedef struct rex_compiler_s rex_compiler_t;
-typedef struct rex_instruction_s rex_instruction_t;
-
-struct rex_instruction_s
-{
-    REX_SIZE_T x, y;
-    rex_opcode_t op;
-};
-
-struct rex_compiler_s{
-    void * stack_top;
-    void * mem;
-    REX_SIZE_T mem_sz;
-};
-
-/* Parsing API */
-REX_SIZE_T
-rex_parse_charset(
-    const unsigned char * const restrict str,
-    REX_SIZE_T len,
-    rex_instruction_t *o_inst, REX_SIZE_T * o_inst_sz
-);
-
-REX_SIZE_T 
-rex_parse_utf8_codepoint(
-    const unsigned char * const restrict str,
-    REX_SIZE_T len,
-    uint32_t * const restrict cp
-);
-
-REX_SIZE_T
-rex_parse_escape_seq(
-    const unsigned char * const restrict str,
-    REX_SIZE_T len,
-    uint32_t * const restrict esc_seq,
-    rex_instruction_t *o_inst, REX_SIZE_T * o_inst_sz
-);
-
-REX_SIZE_T
-rex_parse_multichar_set(
-    const unsigned char * const restrict str,
-    REX_SIZE_T len,
-    rex_instruction_t *o_inst, REX_SIZE_T * o_inst_sz
-);
-
-
-REX_SIZE_T
-rex_parse_mcset_range(
-    const unsigned char * const restrict str,
-    REX_SIZE_T len,
-    uint32_t *cp0, uint32_t *cp1 /* NONNULL */
-);
-
-REX_SIZE_T
-rex_parse_token(
-    const unsigned char * const restrict str,
-    const REX_SIZE_T str_sz,
-    rex_token_t * const restrict token
-);
-
-/* AST MANIPULATION API */
-int
-rex_ast_build(
-    const unsigned char * i_regex_str,
-    const REX_SIZE_T i_regex_str_sz,
-    rex_compiler_t * io_compiler
-);
-
-REX_SIZE_T
-rex_ast_sz(
-    uint8_t * ast,
-    const uint8_t * const ast_floor
-);
-
-REX_SIZE_T
-rex_compile_size(
-    const unsigned char * i_regex_str,
-    const REX_SIZE_T i_regex_str_sz,
-    const rex_token_t tok
-);
-
-REX_SIZE_T
-rex_ast_tostring(
-    const rex_compiler_t * const i_compiler,
-    unsigned char * o_str
-);
-int
-rex_ast_swap_lr(
-    uint8_t * ast_top,
-    const uint8_t * const ast_ceil,
-    const uint8_t * const ast_floor
-);
-int
-rex_ast_compile(
-    rex_compiler_t *io_compiler,
-    REX_SIZE_T i_insti,
-    rex_instruction_t * o_inst
-);
-
-static const REX_SIZE_T rex_child_node_lut[] =
-{
-    /* OUT    IN                            */
-    0,     /* REX_PARSE_TOKEN_NULL          */
-    0,     /* REX_PARSE_TOKEN_CHARSET       */
-    0,     /* REX_PARSE_TOKEN_RPAREN        */       
-    1,     /* REX_PARSE_TOKEN_LPAREN        */
-    2,     /* REX_PARSE_TOKEN_ALTERNATION   */
-    2,     /* REX_PARSE_TOKEN_CONCAT        */
-    1,     /* REX_PARSE_TOKEN_KLEEN         */
-    2,     /* REX_PARSE_TOKEN_QUESTION      */
-    1,     /* REX_PARSE_TOKEN_PLUS          */
-};
-
-static const REX_SIZE_T rex_compiled_digit_set_sz = 1;
-static const REX_SIZE_T rex_compiled_digit_inv_set_sz = 2;
-static const REX_SIZE_T rex_compiled_whitespace_set_sz = 2;
-static const REX_SIZE_T rex_compiled_whitespace_inv_set_sz = 3;
-static const REX_SIZE_T rex_compiled_word_set_sz = 4;
-static const REX_SIZE_T rex_compiled_word_set_inv_sz = 5;
-
-static const rex_instruction_t rex_compiled_digit_set[] =
-{
-    {'0', '9', REX_INST_CHARSET_OR}, 
-};
-static const rex_instruction_t rex_compiled_digit_inv_set[] =
-{
-    {REX_CHAR_MIN, '0'-1, REX_INST_CHARSET_OR}, 
-    {'9'+1, REX_CHAR_MAX, REX_INST_CHARSET_OR} 
-};
-static const rex_instruction_t rex_compiled_whitespace_set[] =
-{
-    {'\t', '\r', REX_INST_CHARSET_OR}, /* \t \n \v \f \r */
-    {' ', ' ', REX_INST_CHARSET_OR}, 
-};
-static const rex_instruction_t rex_compiled_whitespace_inv_set[] =
-{
-    {REX_CHAR_MIN, '\t'-1, REX_INST_CHARSET_OR},
-    {'\r'+1, ' '-1, REX_INST_CHARSET_OR},
-    {' '+1, REX_CHAR_MAX, REX_INST_CHARSET_OR}, 
-};
-static const rex_instruction_t rex_compiled_word_set[] =
-{
-    {'a', 'z', REX_INST_CHARSET_OR},
-    {'A', 'Z', REX_INST_CHARSET_OR}, 
-    {'0', '9', REX_INST_CHARSET_OR}, 
-    {'_', '_', REX_INST_CHARSET_OR}, 
-};
-static const rex_instruction_t rex_compiled_word_inv_set[] =
-{
-    {REX_CHAR_MIN, '0'-1, REX_INST_CHARSET_OR},
-    {'9'+1, 'A'-1, REX_INST_CHARSET_OR}, 
-    {'Z'+1, '_'-1, REX_INST_CHARSET_OR}, 
-    {'_'+1, 'a'-1, REX_INST_CHARSET_OR},
-    {'z'+1, REX_CHAR_MAX, REX_INST_CHARSET_OR}, 
-};
-
-REX_BOOL_T 
-rex_iswhitespace(const uint32_t cp);
-
-REX_BOOL_T 
-rex_isreserved(const uint32_t cp);
-
-REX_BOOL_T 
-rex_iswhitespace(const uint32_t cp)
-{
-    switch (cp)
-    {
-    case ' ':
-    case '\n':
-    case '\t':
-    case '\v':
-    case '\f':
-    case '\r':
-        return 1;
-    default:
-        return 0;
-    }
-}
-
-REX_BOOL_T 
+int 
 rex_isreserved(const uint32_t cp)
 {
     switch (cp)
@@ -349,793 +177,523 @@ rex_isreserved(const uint32_t cp)
     }
 }
 
-REX_SIZE_T 
+#define REX_UTF8_IS_MULTIBYTE(c)                        ((c) & 0x80)
+#define REX_UTF8_MULTIBYTE_MIN                          (2)
+#define REX_UTF8_MULTIBYTE_MAX                          (4)
+#define REX_UTF8_TAIL_BYTE_SIGNIFICANT_BITS             (6)
+#define REX_UTF8_TAIL_BYTES(byte_count)                 ((byte_count) - 1) 
+#define REX_UTF8_SIGNIFICANT_BITMASK(leading_ones)      (0xFF >> (leading_ones))
+#define REX_UTF8_TAIL_BYTE_LEADING_BITMASK              (0xC0)
+#define REX_UTF8_BYTE_MOST_SIGNIFICANT_BIT              (0x80)
+/* UTF8 Parsing
+ * Returns production length
+ * Arguments:
+ *      i_str: string to parse
+ *      i_len: length of string
+ *      o_cp:  where to store the parsed code point (NULLABLE)
+ */
+static inline size_t
 rex_parse_utf8_codepoint(
-    const unsigned char * const restrict str,
-    REX_SIZE_T len,
-    uint32_t * const restrict cp
+    const char * const i_str,
+    size_t i_len,
+    uint32_t * const o_cp
 )
 {
-    rex_utf8_codepoint_fsm_state_t state;
-    uint32_t l = 0, i, j;
-    state = REX_TRY(!!str && len > 0, REX_UTF8_FSM_DECODE);
-
-    for(;;) switch (state)
+    enum
     {
-    case REX_UTF8_FSM_FAIL:
+        REX_UTF8_FAIL,
+        REX_UTF8_DECODE_START,
+        REX_UTF8_COUNT_LEADING_ONES,
+        REX_UTF8_VALIDATE_FIRST_BYTE,
+        REX_UTF8_DECODE_FIRST_BYTE,
+        REX_UTF8_VALIDATE_TAIL_BYTE,
+        REX_UTF8_DECODE_TAIL_BYTE,
+        REX_UTF8_DECODE_ASCII,
+        REX_UTF8_SUCCESS
+    } state;
+    size_t l = 0;
+    uint8_t leading_ones = 0;
+    uint8_t tail_bytes = 0;
+    uint32_t cp = 0;
+    /* i_str validation */
+    state = i_str != NULL  && i_len > 0 ? REX_UTF8_DECODE_START : REX_UTF8_FAIL;
+
+    for (;;) switch(state)
+    {
+    case REX_UTF8_FAIL:
         return 0;
-    case REX_UTF8_FSM_VALID_FIRST_BYTE:
-        *cp |=((uint32_t)(((str[l] << i) & 0xFF)>> i)) << ((i-1)*6);
-        j = 1;
-        state = REX_TRY(l<len, REX_UTF8_FSM_CHAR_TAIL);
+    case REX_UTF8_DECODE_START:
+        state = REX_UTF8_IS_MULTIBYTE(i_str[l]) ?
+            REX_UTF8_COUNT_LEADING_ONES :
+            REX_UTF8_DECODE_ASCII;
+        break;
+    /* Leading ones count of the first byte indicates the length of the sequence */
+    case REX_UTF8_COUNT_LEADING_ONES:
+        leading_ones++;
+        /* Shift by current ones count and test the most significant bit */
+        state = ((i_str[l] << leading_ones) & REX_UTF8_BYTE_MOST_SIGNIFICANT_BIT) ?
+            REX_UTF8_COUNT_LEADING_ONES :
+            REX_UTF8_VALIDATE_FIRST_BYTE;
+        break;
+    case REX_UTF8_VALIDATE_FIRST_BYTE:
+        state = leading_ones >= REX_UTF8_MULTIBYTE_MIN &&
+                leading_ones <= REX_UTF8_MULTIBYTE_MAX ?
+                REX_UTF8_DECODE_FIRST_BYTE :
+                REX_UTF8_FAIL;
+        break;
+    case REX_UTF8_DECODE_FIRST_BYTE:
+        cp |= (
+                ((uint32_t) i_str[l]) &
+                REX_UTF8_SIGNIFICANT_BITMASK(leading_ones)
+            ) << (
+            REX_UTF8_TAIL_BYTE_SIGNIFICANT_BITS *
+            REX_UTF8_TAIL_BYTES(leading_ones)
+            );
+        state = l < i_len? REX_UTF8_VALIDATE_TAIL_BYTE : REX_UTF8_FAIL;
         l++;
         break;
-    case REX_UTF8_FSM_CHAR_TAIL:
-        state = REX_TRY(str[l] >> 6 == 2 && l<len, REX_UTF8_FSM_VALID_TAIL_BYTE);
+    case REX_UTF8_VALIDATE_TAIL_BYTE:
+        tail_bytes = leading_ones - 1;
+        state = (i_str[l] & REX_UTF8_TAIL_BYTE_LEADING_BITMASK) ==
+                REX_UTF8_BYTE_MOST_SIGNIFICANT_BIT ?
+                REX_UTF8_DECODE_TAIL_BYTE :
+                REX_UTF8_FAIL;
         break;
-    case REX_UTF8_FSM_SUCCESS:
+    case REX_UTF8_DECODE_TAIL_BYTE:
+        cp |= ((uint32_t) i_str[l] & ~REX_UTF8_TAIL_BYTE_LEADING_BITMASK) <<
+            tail_bytes * REX_UTF8_TAIL_BYTE_SIGNIFICANT_BITS;
+        state = tail_bytes ? REX_UTF8_SUCCESS : REX_UTF8_FAIL;
+        break;
+    case REX_UTF8_DECODE_ASCII:
+        cp = i_str[l];
+        l = 1;
+        /*FALLTHROUGH */
+    case REX_UTF8_SUCCESS:
+        /* Check if output is NULL */
+        if (o_cp != NULL) *o_cp = cp;
         return l;
-    case REX_UTF8_FSM_DECODE:
-        state = REX_NCHOOSE((str[l] >> 7), REX_UTF8_FSM_ASCII_CHAR); /* OR REX_UTF8_FSM_CHAR */
-        i = 1;
-        j = 0;
-        *cp = 0;
-        break;
-    case REX_UTF8_FSM_ASCII_CHAR:
-        *cp = str[l];
-        l++;
-        return l;
-    case REX_UTF8_FSM_CHAR:
-        i = REX_NCHOOSE(((str[l] << i) & 0xFF)>> 7, i);
-        state = REX_NCHOOSE(((str[l] << i) & 0xFF)>> 7, REX_UTF8_FSM_CHAR);
-        break;
-    case REX_UTF8_FSM_CHECK_BYTE_ONE:
-        state = REX_TRY((i > 1 && i < 5), REX_UTF8_FSM_VALID_FIRST_BYTE);
-        break;
-    case REX_UTF8_FSM_VALID_TAIL_BYTE:
-        *cp |=(uint32_t)(str[l] & 0x3F) << ((i-1-j) * 6);
-        j++;
-        l++;
-        state = REX_CHOOSE(j<i, REX_UTF8_FSM_CHAR_TAIL);
-        break;
     }
 }
-
-
-REX_SIZE_T
-rex_parse_charset(
-    const unsigned char * const restrict str,
-    REX_SIZE_T len,
-    rex_instruction_t *o_inst, REX_SIZE_T * o_inst_sz
-){
-    uint32_t  cp = 0;
-    REX_SIZE_T l = 0;
-    if (len == 0) return 0;
-    if (o_inst_sz) *o_inst_sz = 0;
-
-    switch(str[0])
-    {
-    case '\\':
-        l = rex_parse_escape_seq(str, len, &cp, o_inst, o_inst_sz);
-        if (!l) return 0;
-        if (o_inst && o_inst_sz) o_inst[*o_inst_sz].op = REX_INST_CHARSET_TEST;
-        if (o_inst_sz) ++*o_inst_sz;
-        break;
-    case '.':
-        if (o_inst && o_inst_sz) o_inst[*o_inst_sz] = (rex_instruction_t) {
-            REX_CHAR_MIN, REX_CHAR_MAX,
-            REX_INST_CHARSET_TEST_IMM
-        };
-        if (o_inst_sz) ++*o_inst_sz;
-        break;
-    case '[':
-        l = rex_parse_multichar_set(str, len, o_inst, o_inst_sz);
-        if (!l) return 0;
-        break;
-    case 0:
-        return 0;
-    default:
-        l = rex_parse_utf8_codepoint(str, len, &cp);
-        if (!l &&!rex_isreserved(cp)) return 0;
-        if (o_inst && o_inst_sz) o_inst[*o_inst_sz] = (rex_instruction_t) {
-            cp, cp,
-            REX_INST_CHARSET_TEST_IMM
-        };
-        if (o_inst_sz) ++*o_inst_sz;
-        break;
-    }
-    return l;
-}
-
-REX_SIZE_T
-rex_parse_escape_seq(
-    const unsigned char * const restrict i_str,
-    REX_SIZE_T i_len,
-    uint32_t * const restrict esc_seq,
-    rex_instruction_t *o_inst, REX_SIZE_T * o_inst_sz
+size_t
+rex_parse_hex_digit(
+    const char * const i_str,
+    const size_t i_len,
+    uint32_t * o_hex
 )
 {
-    REX_SIZE_T l, i;
-    uint32_t e, seq;
-    const rex_instruction_t *precomp;
-    rex_instruction_t out;
+    uint32_t hex;
+    if (i_len == 0 || i_str == NULL) return 0;
+    hex = i_str[0];
 
-    l = rex_parse_utf8_codepoint(i_str, i_len, &e);
-    e *= (l!=0);
-    switch(e)
+    if (hex < '0') return 0; 
+    if (hex > '0' && hex < 'A') return 0; 
+
+    /* shift a-f to A-F */
+    if (hex >= 'a' && hex <= 'f') hex -= ('a' - 'A');
+
+    if (hex > 'F') return 0;
+
+    /* shift A-F to come right after the ascii digits */
+    if (hex >= 'A' && hex <= 'F') hex -= ('A' -('9' + 1 ));
+
+    /* Shift the result to 0-15 range */
+    if (o_hex) *o_hex = hex - '0';
+    return 1;
+}
+size_t
+rex_parse_fixed_len_hex(
+    const char * const i_str,
+    const size_t i_len,
+    const uint32_t i_hex_len,
+    uint32_t * o_hex
+)
+{
+    uint32_t hex;
+    uint32_t out;
+    size_t l, i, j;
+    uint32_t shift;
+    l = 0;
+    out = 0;
+    shift = 32 - 4;
+    for (j = 0; j < i_hex_len; j++)
     {
-    case '\\':
-        i = rex_parse_utf8_codepoint(i_str+l, i_len-l, &e);
+        i = rex_parse_hex_digit(i_str + l, i_len - l, &hex);
+        if (i == 0) return 0;
+        
+        out |= hex << shift;
+        shift -= 4;
         l += i;
-        l = REX_TRY(i!= 0, l);
-        break;
-    default:
-       return 0;
     }
-    switch(e)
-    {
-    case 'w':
-        seq = REX_ESC_SEQ_w;
-        precomp = rex_compiled_word_set;
-        i = rex_compiled_word_set_sz;
-        break;
-    case 'W':
-        seq = REX_ESC_SEQ_W; 
-        precomp = rex_compiled_word_inv_set;
-        i = rex_compiled_word_set_inv_sz;
-        break;
-    case 's':
-        seq = REX_ESC_SEQ_s; 
-        precomp = rex_compiled_whitespace_set;
-        i  = rex_compiled_whitespace_set_sz;
-        break;
-    case 'S':
-        seq = REX_ESC_SEQ_S; 
-        precomp = rex_compiled_whitespace_inv_set;
-        i = rex_compiled_whitespace_inv_set_sz;
-        break;
-    case 'd':
-        seq = REX_ESC_SEQ_d; 
-        precomp = rex_compiled_digit_set;
-        i = rex_compiled_digit_set_sz;
-        break;
-    case 'D':
-        seq = REX_ESC_SEQ_D; 
-        precomp = rex_compiled_digit_inv_set;
-        i = rex_compiled_digit_inv_set_sz;
-        break;
-    case 0:
-        return l;
-    default:
-        seq = e;
-        precomp = &out;
-        out.op = REX_INST_CHARSET_OR;
-        out.x = e;
-        out.y = e;
-        i = 1;
-        break;
-    }
-    if (o_inst_sz) *o_inst_sz += i;
-    if (o_inst) memcpy(o_inst, precomp, i*sizeof(rex_instruction_t));
-    
-    if (e) *esc_seq = seq;
-    
+    if (o_hex) *o_hex = out;
     return l;
 }
-
-
-REX_SIZE_T
-rex_parse_multichar_set(
-    const unsigned char * const restrict str,
-    REX_SIZE_T len,
-    rex_instruction_t *o_inst, REX_SIZE_T * o_inst_sz
-
-){
-
-    uint32_t i = 0, cp, l = 0; 
-    REX_SIZE_T scrap = 0;
-    REX_BOOL_T inv;
-    uint32_t rcp0, rcp1;
-    rex_mcset_fsm_state_t state, emit_ret;
-    rex_instruction_t out;
-
-    if (!o_inst_sz) o_inst_sz = &scrap;
-    *o_inst_sz = 0;
-
-    l = rex_parse_utf8_codepoint(str, len, &cp);
-    cp *= (l!=0);
-    switch(cp)
-    {
-    case '[':
-        i = rex_parse_utf8_codepoint(str+l, len-l, &cp);
-        cp = REX_TRY(i!=0, cp);
-        break;
-    default:
-       return 0;
-    }
-
-    state = REX_NCHOOSE(i==0, REX_MCSET_FSM_BODY);
+static inline size_t
+rex_parse_single_char(
+    const char * const i_str,
+    const size_t i_len,
+    uint32_t * const o_cp
+)
+{
+    size_t l, i;
+    uint32_t cp;
+    l = 0;
+    i = 0;
+    i = rex_parse_utf8_codepoint(i_str, i_len, &cp);
+    if (i == 0) return 0;
+    l += i;
     switch (cp)
     {
-    case '^':
-        inv = 1;
+    case '\\':
+        i = rex_parse_utf8_codepoint(i_str+l, i_len-l, &cp);
+        if (i == 0) return 0;
         l+=i;
-        i = rex_parse_utf8_codepoint(str+l, len-l, &cp);
-        l = REX_TRY(i!= 0, l);
-        state = REX_NCHOOSE(i==0 || cp==']', REX_MCSET_FSM_BODY);
-        l += REX_TRY(cp==']', i);
-        break;
-    case 0:
-        return 0;
-    default:
-        inv = 0;
-        break;
-    }
-
-    for(;;) switch (state)
-    {
-    case REX_MCSET_FSM_BODY:
-        emit_ret = REX_CHOOSE(cp==']' || cp == 0, REX_MCSET_FSM_EXIT);
-        state = REX_CHOOSE(cp == ']' && o_inst != 0, REX_MCSET_FSM_EMIT);
-        l = REX_TRY(cp != 0, l);
-        out.op = REX_NCHOOSE(inv, REX_INST_CHARSET_TEST);
-        break;
-    case REX_MCSET_FSM_EXIT:
-        return l;
-    case REX_MCSET_FSM_RANGE:
-        i = rex_parse_mcset_range(str+l, len-l, &rcp0, &rcp1);
-        state = REX_NCHOOSE(i==0, REX_MCSET_FSM_RANGE_ORDERED);
-        l += i;
-        break;
-    case REX_MCSET_FSM_RANGE_ORDERED:
-        l = REX_TRY(rcp0 <= rcp1, l);
-        emit_ret = REX_NCHOOSE(l==0, REX_MCSET_FSM_BODY);
-        out.op = REX_INST_CHARSET_OR;
-        out.x = rcp0;
-        out.y = rcp1;
-        state = REX_CHOOSE(o_inst != NULL, REX_MCSET_FSM_EMIT);
-        break;
-    case REX_MCSET_FSM_ESC:
-        i = rex_parse_escape_seq(str+l, len-l, &cp, o_inst, o_inst_sz);
-        state = REX_TRY(i==0, REX_MCSET_FSM_CHAR);
-        l += i;
-        break;
-    case REX_MCSET_FSM_CHAR:
-        i = rex_parse_utf8_codepoint(str+l, len-l, &cp);
-        l += i;
-        l = REX_TRY(i!=0, l);
-        cp = REX_TRY(i!=0, cp);
-        emit_ret = REX_NCHOOSE(i==0 || cp == '\\', REX_MCSET_FSM_BODY);
-        state = REX_NCHOOSE(
-            i==0 || cp == '\\' ||  o_inst == NULL || cp == ']',
-            REX_MCSET_FSM_EMIT
-        );
-        out.x = cp;
-        out.y = cp;
-        out.op = REX_INST_CHARSET_OR;
-        break;
-    case REX_MCSET_FSM_EMIT:
-        o_inst[(*o_inst_sz)++]=out;
-    /*FALLTHROUGH*/
-    case REX_MCSET_FSM_EMIT_RETURN:
-        state = emit_ret;
-        break;
-    }
-}
-
-REX_SIZE_T
-rex_parse_mcset_range(
-    const unsigned char * const restrict str,
-    REX_SIZE_T len,
-    uint32_t *cp0, uint32_t *cp1 /* NONNULL */
-)
-{
-
-    REX_SIZE_T l =0, i=0; 
-    uint32_t *cp;
-    rex_mcset_fsm_range_state_t state, char_exit;
-
-    state = REX_MCSET_RANGE_ESC;
-    cp = cp0;
-    char_exit = REX_MCSET_RANGE_HYPHEN;
-    
-    for(;;) switch (state)
-    {
-    case REX_MCSET_RANGE_EXIT:
-        return l;
-    case REX_MCSET_RANGE_ESC:
-        i = rex_parse_escape_seq(str+l,len-l, cp, NULL, 0);
-        state = (i!=0) + REX_MCSET_RANGE_CHAR;
-        l += i;
-        l = REX_TRY(state != 0, l);
-        break;
-    case REX_MCSET_RANGE_CHAR:
-        i = rex_parse_utf8_codepoint(str+l, len-l, cp);
-        l += i;
-        l = REX_TRY(i!=0 && *cp!=0 && *cp!=']' && *cp!='\\', l);
-        state = REX_TRY(l!=0, char_exit);
-        break;
-    case REX_MCSET_RANGE_ESC_ISVALID:
-        state = REX_TRY(*cp != 0 && (*cp & 0xFF000000) == 0, char_exit);
-        l = REX_TRY(state!=0, l);
-        break;
-    case REX_MCSET_RANGE_HYPHEN:
-        cp = cp1;
-        i = rex_parse_utf8_codepoint(str+l, len-l, cp);
-        l += i;
-        l = REX_TRY(i!=0 && *cp=='-', l);
-        state = REX_TRY(l!=0, REX_MCSET_RANGE_ESC);
-        char_exit = REX_MCSET_RANGE_EXIT;
-        break;
-    }
-}
-
-int
-rex_ast_compile(
-    rex_compiler_t *io_compiler,
-    REX_SIZE_T i_insti,
-    rex_instruction_t * o_inst
-)
-{
-    uint8_t *ast_top = io_compiler->stack_top;
-    const uint8_t * const ast_ceil = io_compiler->mem;
-    const uint8_t * const ast_floor = ast_ceil + io_compiler->mem_sz;
-    REX_SIZE_T i,j;
-
-#define REX_EMIT_PUSH(val, type)                             \
-    if (ast_top - sizeof(type) < ast_ceil) return 1;         \
-    ast_top -= sizeof(type);                                 \
-    *((type *)ast_top) = val;
-
-#define REX_EMIT_POP(lval, type)                             \
-        lval = *(type *) ast_top;                            \
-        ast_top += sizeof(type);
-
-    while(ast_top < ast_floor) switch((rex_emit_state_t)*ast_top)
-    {
-    case REX_PARSE_TOKEN_CONCAT:
-        ast_top++;
-        rex_ast_swap_lr(ast_top, ast_ceil, ast_floor);
-        break;
-    case REX_PARSE_TOKEN_ALTERNATION:
-        ast_top++;
-        rex_ast_swap_lr(ast_top, ast_ceil, ast_floor);
-        o_inst[i_insti] = (rex_instruction_t) {
-            i_insti+1, 0,
-            REX_INST_SPLIT
-        };
-        REX_EMIT_PUSH(i_insti, REX_SIZE_T);
-        REX_EMIT_PUSH(REX_EMIT_ALTERNATION_INFIX, uint8_t);
-        rex_ast_swap_lr(ast_top, ast_ceil, ast_floor);
-        i_insti++;
-        break;
-    case REX_EMIT_ALTERNATION_INFIX:
-        ast_top++;
-        REX_EMIT_POP(i, REX_SIZE_T);
-        o_inst[i].y = i_insti+1;
-        REX_EMIT_PUSH(i_insti, REX_SIZE_T);
-        REX_EMIT_PUSH(REX_EMIT_ALTERNATION_SUFFIX, uint8_t);
-        o_inst[i_insti] = (rex_instruction_t) {
-            0, 0,
-            REX_INST_JUMP
-        };
-        rex_ast_swap_lr(ast_top, ast_ceil, ast_floor);
-        i_insti++;
-        break;
-    case REX_EMIT_ALTERNATION_SUFFIX:
-        ast_top++;
-        REX_EMIT_POP(i, REX_SIZE_T);
-        o_inst[i].x = i_insti;
-        break;
-    case REX_PARSE_TOKEN_KLEEN:
-        ast_top++;
-        o_inst[i_insti] = (rex_instruction_t) {
-            i_insti+1, 0,
-            REX_INST_SPLIT
-        };
-        REX_EMIT_PUSH(i_insti, REX_SIZE_T);
-        REX_EMIT_PUSH(REX_EMIT_KLEEN_SUFFIX, uint8_t);
-        rex_ast_swap_lr(ast_top, ast_ceil, ast_floor);
-        i_insti++;
-        break;
-    case REX_EMIT_KLEEN_SUFFIX:
-        ast_top++;
-        REX_EMIT_POP(i, REX_SIZE_T);
-        o_inst[i].y = i_insti+1;
-        o_inst[i_insti] = (rex_instruction_t) {
-            i, 0,
-            REX_INST_JUMP
-        };
-        i_insti++;
-        break;
-    case REX_PARSE_TOKEN_QUESTION:
-        ast_top++;
-        REX_EMIT_PUSH(i_insti, REX_SIZE_T);
-        REX_EMIT_PUSH(REX_EMIT_QUESTION_SUFFIX, uint8_t);
-        rex_ast_swap_lr(ast_top, ast_ceil, ast_floor);
-        o_inst[i_insti] = (rex_instruction_t) {
-            i_insti+1, 0,
-            REX_INST_SPLIT
-        };
-        i_insti++;
-        break;
-    case REX_EMIT_QUESTION_SUFFIX:
-        ast_top++;
-        REX_EMIT_POP(i, REX_SIZE_T);
-        o_inst[i].y = i_insti;
-        break;
-
-    case REX_PARSE_TOKEN_LPAREN:
-        /*TODO: CAPTURE GROUPS */
-        break;
-
-    case REX_PARSE_TOKEN_PLUS:
-        ast_top++;
-        REX_EMIT_PUSH(i_insti, REX_SIZE_T);
-        REX_EMIT_PUSH(REX_EMIT_PLUS_SUFFIX, uint8_t);
-        rex_ast_swap_lr(ast_top, ast_ceil, ast_floor);
-        break;
-    case REX_EMIT_PLUS_SUFFIX:
-        ast_top++;
-        REX_EMIT_POP(i, REX_SIZE_T);
-        o_inst[i_insti] = (rex_instruction_t) {
-            i, i_insti+1,
-            REX_INST_SPLIT
-        };
-        i_insti++;
-        break;
-        
-
-    case REX_PARSE_TOKEN_NULL:
-    case REX_PARSE_TOKEN_RPAREN:
-    case REX_PARSE_TOKEN_CHARSET:
-        /* Should not be possible */
-        return 2;
-    default:
-        i = rex_parse_charset(
-            ast_top,
-            SIZE_MAX, /*TODO: do something about REX_SIZE_T. Not null terminated */ 
-            o_inst+i_insti,
-            &j
-        );
-        if(!i) return 2;
-        i_insti += j;
-        ast_top += i;
-        break;
-    }
-    o_inst[i_insti++].op =REX_INST_MATCH;
-    return 0;
-}
-
-int
-rex_ast_build(
-    const unsigned char * i_regex_str,
-    const REX_SIZE_T i_regex_str_sz,
-    rex_compiler_t * io_compiler
-)
-{
-    int r;
-    REX_SIZE_T i;
-    REX_SIZE_T stri, stack_sz;
-    rex_token_t tok, tok_tmp;
-    uint8_t * const stack = io_compiler->mem;
-    uint8_t * output_stack_top = stack + io_compiler->mem_sz;
-
-    stri = 0;
-    stack_sz = 0;
-
-    /* Make Tree */
-    for (stri = 0; stri < i_regex_str_sz && i_regex_str[stri]; stri+=i)
-    {
-        i = rex_parse_token(i_regex_str+stri, i_regex_str_sz, &tok);
-        if (!i) return 0;
-
-    shunting_start:
-        switch(tok)
+        switch(cp)
         {
-        case REX_PARSE_TOKEN_NULL:
-            return 1;
-        case REX_PARSE_TOKEN_CHARSET:
-            /* EMIT TOK */
-            if (stack + stack_sz >= output_stack_top - i) return 1;
-            memcpy(output_stack_top - i, i_regex_str+stri, i);
-            output_stack_top -= i;
-            break;
-        case REX_PARSE_TOKEN_LPAREN:
-            /* PUSH TO OPSTACK */
-            if (stack + stack_sz + 1 >= output_stack_top) return 1;
-            stack[stack_sz++] = tok;
-            break;
-        case REX_PARSE_TOKEN_RPAREN:
-            for (;tok != REX_PARSE_TOKEN_LPAREN;)
-            {
-                if(stack_sz == 0) return 2;
-                if (stack + stack_sz >= output_stack_top) return 1;
-                /* POP AND EMIT TOP OF OPSTACK*/
-                *--output_stack_top = stack[--stack_sz];
-            }
-            break;
-        default:
-            /* WHILE STACK_TOP PRECEDENCE > TOK */
-            if (stack_sz) while(stack[stack_sz-1] > tok)
-            {
-                if (stack + stack_sz >= output_stack_top) return 1;
-                /* POP AND EMIT TOP OF OPSTACK*/
-                *--output_stack_top = stack[--stack_sz];
-            }
-            /* PUSH TOK TO OPSTACK */
-            if (stack + stack_sz + 1 >= output_stack_top) return 1;
-            stack[stack_sz++] = tok;
-            
-            break;
-        } 
-        /* Handle Implicit Concat Using Lookahead */
-        rex_parse_token(i_regex_str+stri+i, i_regex_str_sz - stri -i, &tok_tmp);
-        switch(tok)
-        {
-        case REX_PARSE_TOKEN_PLUS:
-        case REX_PARSE_TOKEN_KLEEN:
-        case REX_PARSE_TOKEN_QUESTION:
-        case REX_PARSE_TOKEN_RPAREN:
-        case REX_PARSE_TOKEN_CHARSET:
-            switch (tok_tmp)
-            {
-            case REX_PARSE_TOKEN_CHARSET:
-            case REX_PARSE_TOKEN_LPAREN:
-                /* Prevent tree mangling due to implicit concat */
-                tok = REX_PARSE_TOKEN_CONCAT;
-                goto shunting_start;
-                if (r) return r;
-            default:
-                break;
-            }
-        default:
-            break;
-        }
-    }
-
-    for(;stack_sz;)
-    {
-        /* No size check needed. 
-         * As output stack increases Input stack decreases */
-        /* POP AND EMIT TOP OF OPSTACK*/
-        *--output_stack_top = stack[--stack_sz];
-    }
-    io_compiler->stack_top = output_stack_top;
-    return 0;
-}
-
-int
-rex_ast_swap_lr(
-    uint8_t * ast_top,
-    const uint8_t * const ast_ceil,
-    const uint8_t * const ast_floor
-)
-{
-    REX_SIZE_T l, r, i;
-    uint8_t t;
-    r = rex_ast_sz(ast_top, ast_floor);
-    if(!r) return 2;
-    l = rex_ast_sz(ast_top+r, ast_floor);
-    if(!l) return 2;
-    if (ast_top - r > ast_ceil) 
-    {
-        memmove(ast_top - r, ast_top, r+l);
-        memmove(ast_top+l, ast_top - r, r);
-    }else
-    {
-        /* Do the swap one at a time */
-        /* TODO: TEST*/
-        /* TODO: More than one at a time?*/
-        for (i = 0; i < l; i++)
-        {
-            t = ast_top[i+r];
-            memmove(ast_top+i+1, ast_top+i, 1);
-            ast_top[i] = t;
-        }
-    }
-    return 0;
-}
-
-REX_SIZE_T
-rex_ast_sz(
-    uint8_t * ast,
-    const uint8_t * const ast_floor
-)
-{
-    REX_SIZE_T tree_sz = 0, i, j, leaves;
-    leaves = 1;
-    for (i =0; ast+i < ast_floor; i++)
-    {
-        switch((rex_emit_state_t)ast[i])
-        {
-        case REX_EMIT_TOKEN_CONCAT:
-        case REX_EMIT_TOKEN_ALTERNATION:
-            leaves++;
-        case REX_EMIT_TOKEN_KLEEN:
-        case REX_EMIT_TOKEN_LPAREN:
-        case REX_EMIT_TOKEN_QUESTION:
-        case REX_EMIT_TOKEN_PLUS:
-            tree_sz++;
-            break;
-        //case REX_EMIT_TOKEN_NULL:
-        case REX_EMIT_TOKEN_RPAREN:
-        case REX_EMIT_TOKEN_CHARSET:
-            /* These should not be possible */
+        case 'w':
+        case 'W':
+        case 's':
+        case 'S':
+        case 'd':
+        case 'D':
             return 0;
+        case 'a':
+            cp = '\a';
             break;
-        case REX_EMIT_KLEEN_SUFFIX:
-        case REX_EMIT_QUESTION_SUFFIX:
-        case REX_EMIT_PLUS_SUFFIX:
-        case REX_EMIT_ALTERNATION_INFIX:
-        case REX_EMIT_ALTERNATION_SUFFIX:
-            return 1 + sizeof(REX_SIZE_T);
+        case 'f':
+            cp = '\f';
+            break;
+        case 't':
+            cp = '\t';
+            break;
+        case 'n':
+            cp = '\n';
+            break;
+        case '\r':
+            cp = '\r';
+            break;
+        case '\v':
+            cp = '\v';
+            break;
+        case 'u':
+            l++;
+            i = rex_parse_fixed_len_hex(i_str + l, i_len - l, 4, &cp);
+            l = i ? l+i : 0;
+            break;
+        case 'U':
+            l++;
+            i = rex_parse_fixed_len_hex(i_str + l, i_len - l, 8, &cp);
+            l = i ? l+i : 0;
+            break;
         default:
-            if (!leaves) return 0;
-            /* TODO: Reconcile SIZE_MAX w REX_SIZE_T */
-            j = rex_parse_charset(ast+i, SIZE_MAX, NULL, NULL);
-            if (!j) return 0;
-            tree_sz += j;
-            leaves--;
-            if (!leaves) return tree_sz;
+        break;
         }
+        if (o_cp) *o_cp = cp;
+        return l;
+    default:
+        if (o_cp) *o_cp = cp;
+        return l;
     }
+}
+
+static inline size_t
+rex_parse_multichar_escape(
+    const char * const i_str,
+    const size_t i_len
+)
+{
+    if (i_len < 2 || i_str == NULL) return 0;
+    if (i_str[0] != '\\') return 0;
+    switch(i_str[1])
+    {
+    case 'w':
+        break;
+    case 'W':
+        break;
+    case 's':
+        break;
+    case 'S':
+        break;
+    case 'd':
+        break;
+    case 'D':
+        break;
+    default:
+        return 0;
+    }
+    return 2;
+}
+
+
+static inline size_t
+rex_parse_multichar_range(
+    const char * const i_str,
+    const size_t i_len,
+    uint32_t * const o_cp0,
+    uint32_t * const o_cp1
+)
+{
+    uint32_t cp0, cp1;
+    size_t l, i;
+    l = rex_parse_single_char(i_str, i_len, &cp0);
+    if (l == 0) return 0;
+
+    i = rex_parse_utf8_codepoint(i_str + l, i_len - l, &cp1);
+    if (i == 0) return 0;
+    if (cp1 != '-') return 0;
+    l += i;
+
+    i = rex_parse_single_char(i_str, i_len, &cp1);
+    if (i == 0) return 0;
+    l += i;
+
+    if (o_cp0) *o_cp0 = cp0;
+    if (o_cp1) *o_cp1 = cp1;
+    return l;
+}
+
+static inline size_t
+rex_parse_multichar_set(
+    const char * const i_str,
+    const size_t i_len
+)
+{
+    uint32_t cp0, cp1;
+    size_t l = 0;
+    size_t i = 0;
+
+    if (i_str == NULL || i_len == 0) return 0;
+    if (i_str[0] == '\\')
+    {
+        return rex_parse_multichar_escape(i_str, i_len);
+    }
+
+    /* the smallest charset is '[]' so 2 chars */
+    if (i_len < 2) return 0;
+
+    if (i_str[0] != '[') return 0;
+
+    l++;
+    /* Can test because we validated string is at least 2 chars */
+    l = i_str[l] == '^'? l + 1: l;
+    for (;;)
+    {
+        /* This does the length check */
+        i = rex_parse_utf8_codepoint(i_str + l, i_len - l, &cp0);
+        if (i == 0) return 0;
+        if (cp0 == ']') return l + i;
+
+        i = rex_parse_multichar_range(i_str + l, i_len - l, &cp0, &cp1);
+        if (i) {
+            if (cp0 > cp1) return 0;
+            l += i;
+            continue;
+        }
+
+        i = rex_parse_single_char(i_str + l, i_len -l, NULL);
+        if (i)
+        {
+            l += i;
+            continue;
+        }
+
+        i = rex_parse_multichar_escape(i_str + l, i_len - l);
+        if (i)
+        {
+            l += i;
+            continue;
+        }
+
+        return 0;
+    }
+}
+
+static inline size_t
+rex_parse_charset(
+    const char * const i_str,
+    const size_t i_len
+)
+{
+    size_t l = 0;
+
+    l = rex_parse_single_char(i_str, i_len, NULL);
+    if (l) return l;
+
+    l = rex_parse_multichar_set(i_str, i_len);
+    if (l) return l;
+
     return 0;
 }
 
-REX_SIZE_T
-rex_ast_tostring(
-    const rex_compiler_t * const i_compiler,
-    unsigned char * o_str
-)
-{
-    REX_SIZE_T i, stri, j;
-    const uint8_t *ast_top = i_compiler->stack_top;
-    const uint8_t *ast_ceil = i_compiler->mem;
-    const uint8_t *ast_floor = ast_ceil + i_compiler->mem_sz;
-    stri=0;
-    for (i = 0; ast_top+i < ast_floor; i++)
-    {
-        /* If it is a parse token */
-        if (ast_top[i] >= REX_PARSE_TOKEN_CHARSET)
-        {
-            switch((rex_token_t) ast_top[i])
-            {
-            case REX_PARSE_TOKEN_PLUS:
-                memcpy(o_str+stri, "PLUS", 4);
-                stri += 4;
-                break;
-            case REX_PARSE_TOKEN_NULL:
-                memcpy(o_str+stri, "NULL", 4);
-                stri += 4;
-                break;
-            case REX_PARSE_TOKEN_KLEEN:
-                memcpy(o_str+stri, "KLEEN", 5);
-                stri += 5;
-                break;
-            case REX_PARSE_TOKEN_QUESTION:
-                memcpy(o_str+stri, "QUESTION", 8);
-                stri += 8;
-                break;
-            case REX_PARSE_TOKEN_LPAREN:
-                memcpy(o_str+stri, "LPAREN", 6);
-                stri += 6;
-                break;
-            case REX_PARSE_TOKEN_RPAREN:
-                memcpy(o_str+stri, "RPAREN", 6);
-                stri += 6;
-                break;
-            case REX_PARSE_TOKEN_CONCAT:
-                memcpy(o_str+stri, "CONCATENATION", 13);
-                stri += 13;
-                break;
-            case REX_PARSE_TOKEN_ALTERNATION:
-                memcpy(o_str+stri, "ALTERNATION", 11);
-                stri += 11;
-                break;
-            case REX_PARSE_TOKEN_CHARSET:
-                memcpy(o_str+stri, "CHARSET", 7);
-                stri += 7;
-                break;
-            default:
-                memcpy(o_str+stri, "MALFORMED_TOKEN", 15);
-                stri += 15;
-                break;
-            }
-            
-        }else{
-            j = rex_parse_charset(
-                ast_top + i,
-                ast_floor - (ast_top + i),
-                NULL,
-                NULL
-            );
-            if (!j) return 2;
-            memcpy(o_str+stri, ast_top+i, j);
-            stri += j;
-            i += j-1;
-        }
-        o_str[stri++] = '\n';
-    }
-    o_str[stri++] = 0;
-    return stri;
-}
-
-REX_SIZE_T
-rex_compile_size(
-    const unsigned char * i_regex_str,
-    const REX_SIZE_T i_regex_str_sz,
-    const rex_token_t tok
-)
-{
-    REX_SIZE_T cpi = 0; 
-    REX_SIZE_T insti = 0; 
-    switch (tok)
-    {
-    case REX_PARSE_TOKEN_PLUS:
-        return 1;
-    case REX_PARSE_TOKEN_NULL:
-        return 0;
-    case REX_PARSE_TOKEN_KLEEN:
-        return 2;
-    case REX_PARSE_TOKEN_QUESTION:
-        return 1;
-    case REX_PARSE_TOKEN_LPAREN:
-        return 1; /* TODO: */
-    case REX_PARSE_TOKEN_CONCAT:
-        return 0;
-    case REX_PARSE_TOKEN_ALTERNATION:
-        return 2;
-    case REX_PARSE_TOKEN_CHARSET:
-        cpi = rex_parse_charset(i_regex_str, i_regex_str_sz, NULL, &insti);
-        if (cpi) 
-            return insti;
-        /*FALLTHROUGH */
-    default:
-        /*ERROR*/
-        return -1;
-    }
-}
-
-REX_SIZE_T
+static inline size_t
 rex_parse_token(
-    const unsigned char * const restrict str,
-    const REX_SIZE_T str_sz,
-    rex_token_t * const restrict token
+    const char * const i_str,
+    const size_t i_len,
+    rex_token_t * const o_token
 )
 {
-    REX_SIZE_T i;
-    switch(str[0])
+    size_t i;
+    switch(i_str[0])
     {
     case '(':
-        *token = REX_PARSE_TOKEN_LPAREN;
+        *o_token = REX_PARSE_TOKEN_LPAREN;
         return 1;
     case ')' :
-        *token = REX_PARSE_TOKEN_RPAREN;
+        *o_token = REX_PARSE_TOKEN_RPAREN;
         return 1;
     case '*':
-        *token = REX_PARSE_TOKEN_KLEEN;
+        *o_token = REX_PARSE_TOKEN_KLEEN;
        return 1;
     case '+':
-       *token = REX_PARSE_TOKEN_PLUS;
+       *o_token = REX_PARSE_TOKEN_PLUS;
        return 1;
     case '|':
-       *token = REX_PARSE_TOKEN_ALTERNATION;
+       *o_token = REX_PARSE_TOKEN_ALTERNATION;
        return 1;
     case '?':
-       *token = REX_PARSE_TOKEN_QUESTION;
+       *o_token = REX_PARSE_TOKEN_QUESTION;
        return 1;
     case 0:
-       *token = REX_PARSE_TOKEN_NULL;
+       *o_token = REX_PARSE_TOKEN_NULL;
        return 0;
     default:
         break;
     }
     
-    i = rex_parse_charset(str, str_sz, 0, NULL);
-    if (i) *token = REX_PARSE_TOKEN_CHARSET;
+    i = rex_parse_charset(i_str, i_len);
+    if (i && o_token) *o_token = REX_PARSE_TOKEN_CHARSET;
     return i;
 }
 
-#endif /* REX_IMPLMENTATION */
+/* Jumped the gun writing this some of it may be useful later */
+#if 0 
+static inline size_t
+rex_compile_single_char(
+    const uint32_t i_cp,
+    rex_instruction_t * const o_prog,
+    size_t * const o_prog_sz
+)
+{
+    *o_prog_sz = 1;
+    if (o_prog != NULL) 
+    {
+        *o_prog = REX_INSTRUCTION(
+            REX_HALT_NOT_IMMEDIATE,
+            i_cp
+        );
+    }
+    return 1;
+}
 
+static inline size_t
+rex_compile_escape_sequence(
+    const char * const i_str,
+    const size_t i_len,
+    rex_instruction_t * const o_prog,
+    size_t * const o_prog_sz
+)
+{
+    uint32_t cp;
+    size_t l;
+    l = rex_parse_utf8_codepoint(i_str+1, i_len-1, &cp);
+    if (!l) return 1;
+
+    switch (cp)
+    {
+    case 'd':
+        break;
+    case 'D':
+        break;
+    case 'w':
+        break;
+    case 'W':
+        break;
+    case 's':
+        break;
+    case 'S':
+        break;
+    default:
+        l = rex_compile_single_char(cp, o_prog, o_prog_sz);
+        return l ? l + 1 : 0;
+    }
+    return 0;
+}
+/* Returns the range from charset body with the least cp0 such that:
+ *      cp0 <= threshold <= cp1 OR
+ *      cp0 > threshold
+ */
+static inline rex_cp_range_t
+rex_min_range_from_charset(
+    const char * const i_str,
+    const size_t i_len,
+    uint32_t i_threshold
+)
+{
+    rex_cp_range_t min, current;
+    size_t l, range_len;
+    min.cp0 = UINT32_MAX;
+    min.cp1 = UINT32_MAX;
+    range_len = 0;
+
+    for(l = 0; l < i_len; l += range_len)
+    {
+        range_len = rex_parse_charset_range(
+            i_str,
+            i_len,
+            i_threshold,
+            &current
+        );
+        if(range_len == 0) break;
+
+        if(
+            current.cp0 < min.cp0 &&
+                (current.cp0 > i_threshold || (
+                    current.cp0 <= i_threshold && 
+                    i_threshold <= current.cp1
+                )
+            )
+        )
+        {
+            min = current;
+        }
+
+    }
+    return min;
+}
+
+static inline size_t
+rex_compile_charset(
+    const char * const i_str,
+    const size_t i_len,
+    rex_instruction_t * const o_prog,
+    size_t * const o_prog_sz
+)
+{
+    uint32_t cp;
+    size_t l;
+    /* TODO: ERROR CODES */
+    if (i_str == NULL || i_len == 0 || o_prog_sz == 0) return 0;
+    l = rex_parse_utf8_codepoint(i_str, i_len, &cp);
+    if (l == 0) return 0;
+    switch(cp)
+    {
+    case '[':
+        break;
+    case '\\':
+        return rex_compile_escape_sequence(
+            i_str,
+            i_len,
+            o_prog,
+            o_prog_sz
+        );
+    case '\0':
+        return 0;
+    /* Single Character */
+    default:
+        return rex_compile_single_char(
+            cp,
+            o_prog,
+            o_prog_sz
+        );
+    }
+}
+#endif
