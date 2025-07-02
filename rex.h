@@ -9,6 +9,11 @@
 
 /* INTERFACE */
 
+/* Error Code */
+#define REX_SUCESS          (0)
+#define REX_OUT_OF_MEMORY   (1)
+#define REX_SYNTAX_ERROR    (1)
+
 /* TYPES */
 typedef uint32_t rex_instruction_t;
 
@@ -139,8 +144,11 @@ enum rex_token_e
     REX_PARSE_TOKEN_ALTERNATION,
     REX_PARSE_TOKEN_CONCAT,
     REX_PARSE_TOKEN_KLEEN,
+    REX_PARSE_TOKEN_KLEEN_LAZY,
     REX_PARSE_TOKEN_QUESTION,
+    REX_PARSE_TOKEN_QUESTION_LAZY,
     REX_PARSE_TOKEN_PLUS,
+    REX_PARSE_TOKEN_PLUS_LAZY,
 };
 typedef enum rex_token_e rex_token_t;
 
@@ -151,7 +159,7 @@ struct rex_cp_range_s
     uint32_t cp0, cp1;
 };
 
-int 
+static inline int 
 rex_isreserved(const uint32_t cp)
 {
     switch (cp)
@@ -191,6 +199,8 @@ rex_isreserved(const uint32_t cp)
  *      i_str: string to parse
  *      i_len: length of string
  *      o_cp:  where to store the parsed code point (NULLABLE)
+ * Notes:
+ * If reads a null terminator will return 1 and o_cp will be set to 0
  */
 static inline size_t
 rex_parse_utf8_codepoint(
@@ -274,7 +284,7 @@ rex_parse_utf8_codepoint(
         return l;
     }
 }
-size_t
+static inline size_t
 rex_parse_hex_digit(
     const char * const i_str,
     const size_t i_len,
@@ -285,6 +295,7 @@ rex_parse_hex_digit(
     if (i_len == 0 || i_str == NULL) return 0;
     hex = i_str[0];
 
+    /* counts as a null terminator check */
     if (hex < '0') return 0; 
     if (hex > '0' && hex < 'A') return 0; 
 
@@ -300,7 +311,7 @@ rex_parse_hex_digit(
     if (o_hex) *o_hex = hex - '0';
     return 1;
 }
-size_t
+static inline size_t
 rex_parse_fixed_len_hex(
     const char * const i_str,
     const size_t i_len,
@@ -317,6 +328,9 @@ rex_parse_fixed_len_hex(
     shift = 32 - 4;
     for (j = 0; j < i_hex_len; j++)
     {
+        /* counts as a null terminator check */
+        /* counts as a len check */
+        /* counts as a i_str null check */
         i = rex_parse_hex_digit(i_str + l, i_len - l, &hex);
         if (i == 0) return 0;
         
@@ -338,17 +352,23 @@ rex_parse_single_char(
     uint32_t cp;
     l = 0;
     i = 0;
+    /* couns as len check and null i_str check */
     i = rex_parse_utf8_codepoint(i_str, i_len, &cp);
     if (i == 0) return 0;
+    if (cp == 0) return 0;
     l += i;
     switch (cp)
     {
+    case 0:
+        return 0;
     case '\\':
         i = rex_parse_utf8_codepoint(i_str+l, i_len-l, &cp);
         if (i == 0) return 0;
         l+=i;
         switch(cp)
         {
+        case 0:
+            return 0;
         case 'w':
         case 'W':
         case 's':
@@ -402,6 +422,7 @@ rex_parse_multichar_escape(
 )
 {
     if (i_len < 2 || i_str == NULL) return 0;
+    /* counts as null terminator check */
     if (i_str[0] != '\\') return 0;
     switch(i_str[1])
     {
@@ -434,6 +455,9 @@ rex_parse_multichar_range(
 {
     uint32_t cp0, cp1;
     size_t l, i;
+    /* counts as a null terminator check */
+    /* counts as a len check */
+    /* counts as a i_str null check */
     l = rex_parse_single_char(i_str, i_len, &cp0);
     if (l == 0) return 0;
 
@@ -462,13 +486,19 @@ rex_parse_multichar_set(
     size_t i = 0;
 
     if (i_str == NULL || i_len == 0) return 0;
-    if (i_str[0] == '\\')
+    switch (i_str[0])
     {
+    case 0:
+        return 0;
+    case '\\':
         return rex_parse_multichar_escape(i_str, i_len);
+    default:
+        break;
     }
 
     /* the smallest charset is '[]' so 2 chars */
     if (i_len < 2) return 0;
+    if (i_str[1] == 0) return 0;
 
     if (i_str[0] != '[') return 0;
 
@@ -480,8 +510,9 @@ rex_parse_multichar_set(
         /* This does the length check */
         i = rex_parse_utf8_codepoint(i_str + l, i_len - l, &cp0);
         if (i == 0) return 0;
+        if (cp0 == 0) return 0;
         if (cp0 == ']') return l + i;
-
+        
         i = rex_parse_multichar_range(i_str + l, i_len - l, &cp0, &cp1);
         if (i) {
             if (cp0 > cp1) return 0;
@@ -515,9 +546,15 @@ rex_parse_charset(
 {
     size_t l = 0;
 
+    /* counts as a null terminator check */
+    /* counts as a len check */
+    /* counts as a i_str null check */
     l = rex_parse_single_char(i_str, i_len, NULL);
     if (l) return l;
 
+    /* counts as a null terminator check */
+    /* counts as a len check */
+    /* counts as a i_str null check */
     l = rex_parse_multichar_set(i_str, i_len);
     if (l) return l;
 
@@ -532,8 +569,17 @@ rex_parse_token(
 )
 {
     size_t i;
+    int lazy = 0;
+    if (i_str == NULL || i_len == 0) return 0;
+    if (i_len > 1 && i_str[0] != 0)
+    {
+        lazy = i_str[1] == '?' ? 1 : 0;
+    }
     switch(i_str[0])
     {
+    case 0:
+        *o_token = REX_PARSE_TOKEN_NULL;
+        return 0;
     case '(':
         *o_token = REX_PARSE_TOKEN_LPAREN;
         return 1;
@@ -541,20 +587,17 @@ rex_parse_token(
         *o_token = REX_PARSE_TOKEN_RPAREN;
         return 1;
     case '*':
-        *o_token = REX_PARSE_TOKEN_KLEEN;
-       return 1;
+        *o_token = REX_PARSE_TOKEN_KLEEN + lazy;
+        return 1 + lazy;
     case '+':
-       *o_token = REX_PARSE_TOKEN_PLUS;
-       return 1;
+        *o_token = REX_PARSE_TOKEN_PLUS + lazy;
+        return 1 + lazy;
     case '|':
-       *o_token = REX_PARSE_TOKEN_ALTERNATION;
-       return 1;
+        *o_token = REX_PARSE_TOKEN_ALTERNATION;
+        return 1;
     case '?':
-       *o_token = REX_PARSE_TOKEN_QUESTION;
-       return 1;
-    case 0:
-       *o_token = REX_PARSE_TOKEN_NULL;
-       return 0;
+        *o_token = REX_PARSE_TOKEN_QUESTION + lazy;
+        return 1 + lazy;
     default:
         break;
     }
@@ -563,6 +606,90 @@ rex_parse_token(
     if (i && o_token) *o_token = REX_PARSE_TOKEN_CHARSET;
     return i;
 }
+/* COMPILATION */
+enum rex_compiler_state_e{
+    REX_STATE_INIT,
+    REX_STATE_LEX,
+    REX_STATE_AST
+};
+
+typedef enum rex_compiler_state_e rex_compiler_state_t;
+typedef struct rex_compiler_s rex_compiler_t;
+typedef struct rex_compiler_lex_ctx_s rex_compiler_lex_ctx_t;
+typedef struct rex_compiler_ast_ctx_s rex_compiler_ast_ctx_t;
+typedef union rex_compiler_ctx_u rex_compiler_ctx_t;
+typedef struct rex_lexeme_s rex_lexeme_t;
+
+struct rex_compiler_lex_ctx_s
+{
+    rex_lexeme_t * lexemes; 
+    size_t lexemes_sz; 
+};
+
+struct rex_compiler_ast_ctx_s
+{
+    void * ast_top;
+    size_t ast_sz; 
+};
+
+union rex_compiler_ctx_u
+{
+    rex_compiler_lex_ctx_t lex_ctx;
+    rex_compiler_ast_ctx_t ast_ctx;
+};
+
+struct rex_compiler_s
+{
+
+    void * memory;
+    size_t memory_sz;
+    rex_compiler_state_t state;
+    rex_compiler_ctx_t ctx;
+};
+
+struct rex_lexeme_s
+{
+    rex_token_t token;
+    const char * start;
+};
+
+int
+rex_lex_regex_str(
+    const char * const i_str,
+    const size_t i_len,
+    rex_compiler_t * const io_compiler
+)
+{
+    size_t l, i, lexeme_i;
+    rex_lexeme_t lexeme;
+    rex_lexeme_t * const lexeme_str = io_compiler->memory;
+    l = 0;
+    for (lexeme_i = 0;;lexeme_i++)
+    {
+        i = rex_parse_token(
+            i_str + l,
+            i_len - l,
+            &lexeme.token
+        );
+        if (!i) break;
+        if ((lexeme_i+1) * sizeof(rex_lexeme_t) > io_compiler->memory_sz)
+        {
+            return REX_OUT_OF_MEMORY;
+        }
+        lexeme.start = i_str + l;
+        lexeme_str[lexeme_i] = lexeme;
+    }
+    if (l == i_len || i_str[l] == 0)
+    {
+        io_compiler->state = REX_STATE_LEX;
+        io_compiler->ctx.lex_ctx.lexemes = lexeme_str;
+        io_compiler->ctx.lex_ctx.lexemes_sz = lexeme_i;
+
+        return REX_SUCESS;
+    }
+    return REX_SYNTAX_ERROR;
+}
+
 
 /* Jumped the gun writing this some of it may be useful later */
 #if 0 
