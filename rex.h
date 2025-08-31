@@ -1,20 +1,14 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#ifndef REX_NO_STDLIB
-
+#ifndef REX_MEMCPY
 #include <string.h>
 #define REX_MEMCPY memcpy
-#define REX_MEMMOVE memmove
-
-#endif
-
-#ifndef REX_MEMCPY
-#error REX_MEMCPY macro Undefined
 #endif
 
 #ifndef REX_MEMMOVE
-#error REX_MEMMOVE macro Undefined
+#include <string.h>
+#define REX_MEMMOVE memmove
 #endif
 
 /* THREAD SAFTEY */
@@ -24,6 +18,8 @@
  */
 
 /* INTERFACE */
+
+#define REX_MAX_UNICODE_VAL (0x00FFFFFF)
 
 /* Error Code */
 #define REX_SUCESS          (0)
@@ -173,13 +169,6 @@ enum rex_token_e
     REX_TOKEN_PLUS_LAZY,
 };
 typedef enum rex_token_e rex_token_t;
-
-/* Defines a range of codepoints */
-typedef struct rex_cp_range_s rex_cp_range_t;
-struct rex_cp_range_s
-{
-    uint32_t cp0, cp1;
-};
 
 static inline int 
 rex_isreserved(const uint32_t cp)
@@ -488,7 +477,7 @@ rex_parse_multichar_range(
     if (cp1 != '-') return 0;
     l += i;
 
-    i = rex_parse_single_char(i_str, i_len, &cp1);
+    i = rex_parse_utf8_codepoint(i_str + l, i_len - l, &cp1);
     if (i == 0) return 0;
     l += i;
 
@@ -572,15 +561,15 @@ rex_parse_charset(
     /* counts as a null terminator check */
     /* counts as a len check */
     /* counts as a i_str null check */
-    l = rex_parse_single_char(i_str, i_len, &cp);
-    if (rex_isreserved(cp)) return 0;
-    if (l && cp != 0) return l;
+    l = rex_parse_multichar_set(i_str, i_len);
+    if (l) return l;
 
     /* counts as a null terminator check */
     /* counts as a len check */
     /* counts as a i_str null check */
-    l = rex_parse_multichar_set(i_str, i_len);
-    if (l) return l;
+    l = rex_parse_single_char(i_str, i_len, &cp);
+    if (rex_isreserved(cp)) return 0;
+    if (l && cp != 0) return l;
 
     return 0;
 }
@@ -745,7 +734,7 @@ rex_compile_charset(
         REX_INSTRUCTION(REX_HALT_RANGE, 0),
 
         /* '9'+1 to MAX_VAL */
-        REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, 0x00FFFFFF),
+        REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, REX_MAX_UNICODE_VAL),
         REX_INSTRUCTION(REX_HALT_RANGE, '9'+1),
     };
 
@@ -938,173 +927,3 @@ rex_build_ast(
     io_compiler->ctx.ast_ctx.ast_top = ast_top;
     return 0;
 }
-
-/* Jumped the gun writing this some of it may be useful later */
-#if 0 
-static inline int
-rex_lex_regex(
-    const char * const i_str,
-    const size_t i_len,
-    rex_compiler_t * const io_compiler
-)
-{
-    size_t l, i, lexeme_i;
-    rex_lexeme_t lexeme;
-    rex_lexeme_t * const lexeme_str = io_compiler->memory;
-    l = 0;
-    for (lexeme_i = 0;;lexeme_i++)
-    {
-        i = rex_parse_token(
-            i_str + l,
-            i_len - l,
-            &lexeme.token
-        );
-        if (!i) break;
-        if ((lexeme_i+1) * sizeof(rex_lexeme_t) > io_compiler->memory_sz)
-        {
-            return REX_OUT_OF_MEMORY;
-        }
-        lexeme.start = i_str + l;
-        lexeme_str[lexeme_i] = lexeme;
-    }
-    if (l == i_len || i_str[l] == 0)
-    {
-        io_compiler->state = REX_STATE_LEX;
-        io_compiler->ctx.lex_ctx.lexemes = lexeme_str;
-        io_compiler->ctx.lex_ctx.lexemes_sz = lexeme_i;
-
-        return REX_SUCESS;
-    }
-    return REX_SYNTAX_ERROR;
-}
-static inline size_t
-rex_compile_single_char(
-    const uint32_t i_cp,
-    rex_instruction_t * const o_prog,
-    size_t * const o_prog_sz
-)
-{
-    *o_prog_sz = 1;
-    if (o_prog != NULL) 
-    {
-        *o_prog = REX_INSTRUCTION(
-            REX_HALT_NOT_IMMEDIATE,
-            i_cp
-        );
-    }
-    return 1;
-}
-
-static inline size_t
-rex_compile_escape_sequence(
-    const char * const i_str,
-    const size_t i_len,
-    rex_instruction_t * const o_prog,
-    size_t * const o_prog_sz
-)
-{
-    uint32_t cp;
-    size_t l;
-    l = rex_parse_utf8_codepoint(i_str+1, i_len-1, &cp);
-    if (!l) return 1;
-
-    switch (cp)
-    {
-    case 'd':
-        break;
-    case 'D':
-        break;
-    case 'w':
-        break;
-    case 'W':
-        break;
-    case 's':
-        break;
-    case 'S':
-        break;
-    default:
-        l = rex_compile_single_char(cp, o_prog, o_prog_sz);
-        return l ? l + 1 : 0;
-    }
-    return 0;
-}
-/* Returns the range from charset body with the least cp0 such that:
- *      cp0 <= threshold <= cp1 OR
- *      cp0 > threshold
- */
-static inline rex_cp_range_t
-rex_min_range_from_charset(
-    const char * const i_str,
-    const size_t i_len,
-    uint32_t i_threshold
-)
-{
-    rex_cp_range_t min, current;
-    size_t l, range_len;
-    min.cp0 = UINT32_MAX;
-    min.cp1 = UINT32_MAX;
-    range_len = 0;
-
-    for(l = 0; l < i_len; l += range_len)
-    {
-        range_len = rex_parse_charset_range(
-            i_str,
-            i_len,
-            i_threshold,
-            &current
-        );
-        if(range_len == 0) break;
-
-        if(
-            current.cp0 < min.cp0 &&
-                (current.cp0 > i_threshold || (
-                    current.cp0 <= i_threshold && 
-                    i_threshold <= current.cp1
-                )
-            )
-        )
-        {
-            min = current;
-        }
-
-    }
-    return min;
-}
-
-static inline size_t
-rex_compile_charset(
-    const char * const i_str,
-    const size_t i_len,
-    rex_instruction_t * const o_prog,
-    size_t * const o_prog_sz
-)
-{
-    uint32_t cp;
-    size_t l;
-    /* TODO: ERROR CODES */
-    if (i_str == NULL || i_len == 0 || o_prog_sz == 0) return 0;
-    l = rex_parse_utf8_codepoint(i_str, i_len, &cp);
-    if (l == 0) return 0;
-    switch(cp)
-    {
-    case '[':
-        break;
-    case '\\':
-        return rex_compile_escape_sequence(
-            i_str,
-            i_len,
-            o_prog,
-            o_prog_sz
-        );
-    case '\0':
-        return 0;
-    /* Single Character */
-    default:
-        return rex_compile_single_char(
-            cp,
-            o_prog,
-            o_prog_sz
-        );
-    }
-}
-#endif

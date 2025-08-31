@@ -5,34 +5,192 @@
 #include <stdlib.h>
 #include <string.h>
 
+
+/* 
+ * current implementation breaks on
+ * [a-ks-zb-w]
+ * a-k never merges with anything.
+ * May just need 1 more merge pass this function 
+ */
+#define REX_MAX(start0, start1) \
+    (((start0) > (start1))? (start0) : (start1))
+#define REX_MIN(start0, start1) \
+    (((start0) < (start1))? (start0) : (start1))
+
+static inline void rex_mcset_body_least_common_range(
+    const char * const i_body,
+    uint32_t * const io_r0,
+    uint32_t * const io_r1
+)
+{
+    size_t l, i;
+    uint32_t cp0, cp1;
+    uint32_t min_cp0, min_cp1;
+    min_cp0 = REX_MAX_UNICODE_VAL + 1;
+    min_cp1 = REX_MAX_UNICODE_VAL + 1;
+    for (
+        l = 0, i = 0;
+        i_body[l] != ']';
+        l+=i
+    )
+    {
+        /* TODO:
+         * turn test_subset into a macro and stick it into the step of the for loop
+         * replace gotos with continues 
+         */
+        i = rex_parse_multichar_range(i_body + l, SIZE_MAX, &cp0, &cp1);
+        if (i) goto test_subset;
+
+        i = rex_parse_single_char(i_body + l, SIZE_MAX, &cp0);
+        if(i){
+            cp1 = cp0;
+            goto test_subset;
+        }
+
+        i = rex_parse_multichar_escape(i_body + l, SIZE_MAX);
+        if (i)
+        {
+            switch(i_body[l + 1])
+            {
+                case 'W':
+                case 'w':
+                case 'S':
+                case 's':
+                case 'D':
+                /*TODO */
+                case 'd':
+                    cp0 = '0';
+                    cp1 = '9';
+                    break;
+            }
+        goto test_subset;
+        }
+
+    test_subset:
+        /* If parsed range contains a subset of input */
+        if (
+            REX_MAX(cp0, *io_r0) <= REX_MIN(cp1, *io_r1)
+        ) {
+            /* If parsed range contains a subset of current minimum range */ 
+            if (
+                REX_MAX(min_cp0, cp0) <= REX_MIN(min_cp1, cp1)
+            ) {
+                /* Merge ranges */
+                min_cp0 = REX_MIN(min_cp0, cp0);
+                min_cp1 = REX_MAX(min_cp1, cp1);
+            }else
+            {
+                /*Pick range with least start */
+                min_cp0 = REX_MIN(min_cp0, cp0);
+                min_cp1 = (min_cp0 < cp0) ? min_cp1 : cp1;
+            }
+        }
+    }
+    *io_r0 = min_cp0;
+    *io_r1 = min_cp1;
+}
+
+
+/* 
+ * Takes a range [*io_r0, *io_r1] as input
+ * Finds the least range that is a mutual subset of i_body and [*io_r0, *io_r1]
+ * If no subset is found, *io_r0 == *io_r1 > CODEPOINT_MAX_VAL
+ *
+ * No validation performed against i_body
+ * Inputting UINT32_MAX breaks this function
+ */
+static inline void rex_mcset_body_simplify(
+    const char * const i_body,
+    uint32_t * const io_r0,
+    uint32_t * const io_r1
+)
+{
+    size_t l, i;
+    uint32_t cp0, cp1;
+    uint32_t min_cp0, min_cp1;
+
+    min_cp0 = *io_r0;
+    min_cp1 = *io_r1;
+    rex_mcset_body_least_common_range(
+        i_body,
+        &min_cp0,
+        &min_cp1
+    );
+    if (min_cp1 < REX_MAX_UNICODE_VAL) for(;;) {
+        cp0 = min_cp1+1;
+        cp1 = REX_MAX_UNICODE_VAL;
+        rex_mcset_body_least_common_range(
+            i_body,
+            &cp0,
+            &cp1
+        );
+        if (cp0 > min_cp1+1) break;
+        /* Merge ranges */
+        min_cp1 = cp1;
+    };
+    *io_r0 = min_cp0;
+    *io_r1 = min_cp1;
+}
+  
+
 int main(int argc, char ** argv)
 {
     rex_compiler_t rexc;
     uint8_t mem[1024];
-    unsigned char ast_str[512];
+    unsigned char re_str[512];
+    size_t re_str_sz;
+    size_t i;
     rex_instruction_t prog[128];
     int r;
-    rexc.mem = mem;
-    rexc.mem_sz = 1024;
+    uint32_t cp0, cp1;
 
-    r= rex_ast_build(
-        ((unsigned char **)argv)[1],
-        strlen(argv[1]),
-        &rexc
-    );
-    if (r) return r;
+    rexc.memory = mem;
+    rexc.memory_sz = 1024;
+    for (;;)
+    {
+    if (!fgets(re_str, 512, stdin))
+    {
+        continue;
+    }
+    
+    re_str_sz = strlen(re_str);
+    re_str[re_str_sz--] = 0;
 
-    rex_ast_tostring(
-        &rexc,
-        ast_str
+    i = rex_parse_charset(
+        re_str,
+        re_str_sz+1
     );
-    fputs((const char * )ast_str, stdout);
-    r = rex_ast_compile(
-        &rexc,
-        0,
-        prog
-    );
-    if (r) return r;
 
-    return r;
+    if (i == 0)
+    {
+        puts("Parse Failure");
+        continue;
+    } else if (i == re_str_sz)
+    {
+        puts("Parse Sucess");
+    }else{
+        puts("Trailing Characters");
+        continue;
+    }
+    if (re_str[0] != '[') continue;
+    if (re_str[1] == '^') continue;
+    puts("As sorted Ranges:");
+    
+    cp0 = 0, cp1 = REX_MAX_UNICODE_VAL;
+    for(;;) {
+        rex_mcset_body_simplify(
+            re_str+1,
+            &cp0,
+            &cp1
+        );
+        if (cp0 > REX_MAX_UNICODE_VAL) break;
+        printf("[%c, %c], ", cp0, cp1);
+        cp0 = cp1 + 1;
+        cp1 = REX_MAX_UNICODE_VAL;
+    };
+    puts("\n");
+    }
+    return 0;
 }
+
+
