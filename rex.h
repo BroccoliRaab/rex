@@ -237,7 +237,7 @@ rex_parse_utf8_codepoint(
     uint8_t tail_bytes = 0;
     uint32_t cp = 0;
     /* i_str validation */
-    state = i_str != NULL  && i_len > 0 ? REX_UTF8_DECODE_START : REX_UTF8_FAIL;
+    state = i_str != NULL && i_len > 0 ? REX_UTF8_DECODE_START : REX_UTF8_FAIL;
 
     for (;;) switch(state)
     {
@@ -288,7 +288,7 @@ rex_parse_utf8_codepoint(
     case REX_UTF8_DECODE_ASCII:
         cp = i_str[l];
         l = 1;
-        /*FALLTHROUGH */
+        /* FALLTHROUGH */
     case REX_UTF8_SUCCESS:
         /* Check if output is NULL */
         if (o_cp != NULL) *o_cp = cp;
@@ -454,7 +454,6 @@ rex_parse_multichar_escape(
     }
     return 2;
 }
-
 
 static inline size_t
 rex_parse_multichar_range(
@@ -629,13 +628,7 @@ typedef struct rex_compiler_s rex_compiler_t;
 typedef struct rex_compiler_lex_ctx_s rex_compiler_lex_ctx_t;
 typedef struct rex_compiler_ast_ctx_s rex_compiler_ast_ctx_t;
 typedef union rex_compiler_ctx_u rex_compiler_ctx_t;
-typedef struct rex_lexeme_s rex_lexeme_t;
-
-struct rex_compiler_lex_ctx_s
-{
-    rex_lexeme_t * lexemes; 
-    size_t lexemes_sz; 
-};
+typedef struct rex_range_s rex_range_t;
 
 struct rex_compiler_ast_ctx_s
 {
@@ -645,7 +638,6 @@ struct rex_compiler_ast_ctx_s
 
 union rex_compiler_ctx_u
 {
-    rex_compiler_lex_ctx_t lex_ctx;
     rex_compiler_ast_ctx_t ast_ctx;
 };
 
@@ -658,11 +650,128 @@ struct rex_compiler_s
     rex_compiler_ctx_t ctx;
 };
 
-struct rex_lexeme_s
+struct rex_range_s
 {
-    const char * start;
-    rex_token_t token;
+    uint32_t r0,r1;
 };
+
+static size_t const rex_w_range_set_sz = 4;
+static const rex_range_t rex_w_range_set[4] =
+{
+    {'0', '9'},{'A','Z'},{'_','_'},{'a', 'z'}
+};
+
+static size_t const rex_W_range_set_sz = 5;
+static const rex_range_t rex_W_range_set[5] =
+{
+    {0,     '0'-1},
+    {'9'+1, 'A'-1},
+    {'Z'+1, '_'-1},
+    {'_'+1, 'a'-1},
+    {'z'+1, REX_MAX_UNICODE_VAL}
+};
+
+static size_t const rex_s_range_set_sz = 2;
+static const rex_range_t rex_s_range_set[2] =
+{
+    {'\t', '\r'}, {' ', ' '}
+};
+
+static size_t const rex_S_range_set_sz = 3;
+static const rex_range_t rex_S_range_set[3] =
+{
+    {0, '\t'-1}, {'\r'+1, ' '-1}, {' '+1, REX_MAX_UNICODE_VAL}
+};
+
+static size_t const rex_d_range_set_sz = 1;
+static const rex_range_t rex_d_range_set[1] =
+{
+    {'0', '9'}
+};
+
+static size_t const rex_D_range_set_sz = 2;
+static const rex_range_t rex_D_range_set[2] =
+{
+    {0, '0'-1}, {'9'+1, REX_MAX_UNICODE_VAL}
+};
+
+/* TODO: Pretty sure all of these precompiled sets are wrong */
+static size_t const rex_w_inst_set_sz = 7;
+static const rex_instruction_t rex_w_inst_set[] =
+{
+    /* 0 to 'a'-1 */
+    REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, 'a'-1),
+    REX_INSTRUCTION(REX_HALT_RANGE, 0),
+    /* 'z'+1 to 'A'-1 */
+    REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, 'A'-1),
+    REX_INSTRUCTION(REX_HALT_RANGE, 'z'+1),
+    /* 'Z'+1 to '0'-1 */
+    REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, '0'-1),
+    REX_INSTRUCTION(REX_HALT_RANGE, 'Z'+1),
+    /* '9'+1 to '_'-1 AND '_'+1 to MAX_VAL */
+    REX_INSTRUCTION(REX_HALT_NOT_IMMEDIATE, '_')
+};
+
+static size_t const rex_W_inst_set_sz = 7;
+static const rex_instruction_t rex_W_inst_set[] =
+{
+    /* a to z */
+    REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, 'z'),
+    REX_INSTRUCTION(REX_HALT_RANGE, 'a'),
+    /* A to Z */
+    REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, 'Z'),
+    REX_INSTRUCTION(REX_HALT_RANGE, 'A'),
+    /* 0 to 9 */
+    REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, '9'),
+    REX_INSTRUCTION(REX_HALT_RANGE, '0'),
+    /* '_' */
+    REX_INSTRUCTION(REX_HALT_IMMEDIATE, '_')
+};
+
+static size_t const rex_s_inst_set_sz = 5;
+static const rex_instruction_t rex_s_inst_set[] =
+{
+    /* 0 to '\t'-1 */
+    REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, '\t'-1),
+    REX_INSTRUCTION(REX_HALT_RANGE, 0),
+    /* '\r'+1 to ' '-1 */
+    REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, ' '-1),
+    REX_INSTRUCTION(REX_HALT_RANGE, '\r'+1),
+    /* Anything but '_' */
+    REX_INSTRUCTION(REX_HALT_NOT_IMMEDIATE, ' ')
+};
+
+static size_t const rex_S_inst_set_sz = 3;
+static const rex_instruction_t rex_S_inst_set[] =
+{
+    /*  '\t' to '\r' */
+    REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, '\r'),
+    REX_INSTRUCTION(REX_HALT_RANGE, '\t'),
+    /* '_' */
+    REX_INSTRUCTION(REX_HALT_IMMEDIATE, ' ')
+};
+
+static size_t const rex_d_inst_set_sz = 4;
+static const rex_instruction_t rex_d_inst_set[] =
+{
+    /* 0 to '0'-1 */
+    REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, '0'-1),
+    REX_INSTRUCTION(REX_HALT_RANGE, 0),
+
+    /* '9'+1 to MAX_VAL */
+    REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, REX_MAX_UNICODE_VAL),
+    REX_INSTRUCTION(REX_HALT_RANGE, '9'+1),
+};
+
+static size_t const rex_D_inst_set_sz = 2;
+static const rex_instruction_t rex_D_inst_set[] =
+{
+    /* '0' to '9' */
+    REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, '9'),
+    REX_INSTRUCTION(REX_HALT_RANGE, '0'),
+
+};
+
 /* Charset must be validated with rex_parse_charset() before invocation */
 static inline size_t
 rex_compile_charset(
@@ -671,81 +780,6 @@ rex_compile_charset(
     rex_instruction_t * const o_prog
 )
 {
-    static size_t const w_set_sz = 7;
-    static const rex_instruction_t w_set[] =
-    {
-        /* 0 to 'a'-1 */
-        REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, 'a'-1),
-        REX_INSTRUCTION(REX_HALT_RANGE, 0),
-        /* 'z'+1 to 'A'-1 */
-        REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, 'A'-1),
-        REX_INSTRUCTION(REX_HALT_RANGE, 'z'+1),
-        /* 'Z'+1 to '0'-1 */
-        REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, '0'-1),
-        REX_INSTRUCTION(REX_HALT_RANGE, 'Z'+1),
-        /* '9'+1 to '_'-1 AND '_'+1 to MAX_VAL */
-        REX_INSTRUCTION(REX_HALT_NOT_IMMEDIATE, '_')
-    };
-
-    static size_t const W_set_sz = 7;
-    static const rex_instruction_t W_set[] =
-    {
-        /* a to z */
-        REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, 'z'),
-        REX_INSTRUCTION(REX_HALT_RANGE, 'a'),
-        /* A to Z */
-        REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, 'Z'),
-        REX_INSTRUCTION(REX_HALT_RANGE, 'A'),
-        /* 0 to 9 */
-        REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, '9'),
-        REX_INSTRUCTION(REX_HALT_RANGE, '0'),
-        /* '_' */
-        REX_INSTRUCTION(REX_HALT_IMMEDIATE, '_')
-    };
-
-    static size_t const s_set_sz = 5;
-    static const rex_instruction_t s_set[] =
-    {
-        /* 0 to '\t'-1 */
-        REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, '\t'-1),
-        REX_INSTRUCTION(REX_HALT_RANGE, 0),
-        /* '\r'+1 to ' '-1 */
-        REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, ' '-1),
-        REX_INSTRUCTION(REX_HALT_RANGE, '\r'+1),
-        /* Anything but '_' */
-        REX_INSTRUCTION(REX_HALT_NOT_IMMEDIATE, ' ')
-    };
-
-    static size_t const S_set_sz = 3;
-    static const rex_instruction_t S_set[] =
-    {
-        /*  '\t' to '\r' */
-        REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, '\r'),
-        REX_INSTRUCTION(REX_HALT_RANGE, '\t'),
-        /* '_' */
-        REX_INSTRUCTION(REX_HALT_IMMEDIATE, ' ')
-    };
-
-    static size_t const d_set_sz = 4;
-    static const rex_instruction_t d_set[] =
-    {
-        /* 0 to '0'-1 */
-        REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, '0'-1),
-        REX_INSTRUCTION(REX_HALT_RANGE, 0),
-
-        /* '9'+1 to MAX_VAL */
-        REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, REX_MAX_UNICODE_VAL),
-        REX_INSTRUCTION(REX_HALT_RANGE, '9'+1),
-    };
-
-    static size_t const D_set_sz = 2;
-    static const rex_instruction_t D_set[] =
-    {
-        /* '0' to '9' */
-        REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, '9'),
-        REX_INSTRUCTION(REX_HALT_RANGE, '0'),
-
-    };
 
     const char * cp = i_cs;
     switch (*cp)
@@ -760,61 +794,61 @@ rex_compile_charset(
             {
                 REX_MEMCPY(
                     o_prog,
-                    w_set,
-                    w_set_sz * sizeof(rex_instruction_t)
+                    rex_w_inst_set,
+                    rex_w_inst_set_sz * sizeof(rex_instruction_t)
                 );
             }
-            return w_set_sz;
+            return rex_w_inst_set_sz;
         case 'W':
             if (o_prog)
             {
                 REX_MEMCPY(
                     o_prog,
-                    W_set,
-                    W_set_sz * sizeof(rex_instruction_t)
+                    rex_W_inst_set,
+                    rex_W_inst_set_sz * sizeof(rex_instruction_t)
                 );
             }
-            return W_set_sz;
+            return rex_W_inst_set_sz;
         case 's':
             if (o_prog)
             {
                 REX_MEMCPY(
                     o_prog,
-                    s_set,
-                    s_set_sz * sizeof(rex_instruction_t)
+                    rex_s_inst_set,
+                    rex_s_inst_set_sz * sizeof(rex_instruction_t)
                 );
             }
-            return s_set_sz;
+            return rex_s_inst_set_sz;
         case 'S':
             if (o_prog)
             {
                 REX_MEMCPY(
                     o_prog,
-                    S_set,
-                    S_set_sz * sizeof(rex_instruction_t)
+                    rex_S_inst_set,
+                    rex_S_inst_set_sz * sizeof(rex_instruction_t)
                 );
             }
-            return S_set_sz;
+            return rex_S_inst_set_sz;
         case 'd':
             if (o_prog)
             {
                 REX_MEMCPY(
                     o_prog,
-                    d_set,
-                    d_set_sz * sizeof(rex_instruction_t)
+                    rex_d_inst_set,
+                    rex_d_inst_set_sz * sizeof(rex_instruction_t)
                 );
             }
-            return d_set_sz;
+            return rex_d_inst_set_sz;
         case 'D':
             if (o_prog)
             {
                 REX_MEMCPY(
                     o_prog,
-                    D_set,
-                    D_set_sz * sizeof(rex_instruction_t)
+                    rex_D_inst_set,
+                    rex_D_inst_set_sz * sizeof(rex_instruction_t)
                 );
             }
-            return D_set_sz;
+            return rex_D_inst_set_sz;
         default:
             break;
         }
