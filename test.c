@@ -6,21 +6,17 @@
 #include <string.h>
 
 
-/* 
- * current implementation infinitely loops on
- * [\d\D]
- */
 #define REX_MAX(start0, start1) \
     (((start0) > (start1))? (start0) : (start1))
 #define REX_MIN(start0, start1) \
     (((start0) < (start1))? (start0) : (start1))
 #define REX_INTERSECTION_EXISTS(r0_start, r0_end, r1_start, r1_end) \
     (REX_MAX(r0_start, r1_start) <= REX_MIN(r0_end, r1_end))
-#define REX_MIN_INTERSECTION_START(min0, min1, cur0, cur1, super0, super1)  \
-    (REX_INTERSECTION_EXISTS(cur0, cur1, super0, super1) ?                  \
+#define REX_MIN_INTERSECTION_START(min0, min1, cur0, cur1, super0, super1) \
+    (REX_INTERSECTION_EXISTS(cur0, cur1, super0, super1) ?                 \
         REX_MIN(min0, cur0) : min0)
-#define REX_MIN_INTERSECTION_END(min0, min1, cur0, cur1, super0, super1)  \
-    (REX_INTERSECTION_EXISTS(cur0, cur1, super0, super1) ?                \
+#define REX_MIN_INTERSECTION_END(min0, min1, cur0, cur1, super0, super1) \
+    (REX_INTERSECTION_EXISTS(cur0, cur1, super0, super1) ?               \
         ((min0 < cur0) ? min1 : cur1) : min1)
 
 static inline void rex_mcset_body_range_sort(
@@ -140,6 +136,57 @@ static inline void rex_mcset_body_simplify(
     *io_r1 = min_cp1;
 }
 
+
+/* 
+ * Takes a range [*io_r0, *io_r1] as input
+ * Finds the least range that is a subset [*io_r0, *io_r1] and not i_body
+ * If no subset is found, *io_r0 == *io_r1 > CODEPOINT_MAX_VAL
+ *
+ * No validation performed against i_body
+ * Inputting UINT32_MAX breaks this function
+ */
+static inline void rex_mcset_body_simplify_inverted(
+    const char * const i_body,
+    uint32_t * const io_r0,
+    uint32_t * const io_r1
+)
+{
+    uint32_t cur0;
+    uint32_t cur1;
+
+    cur0 = *io_r0;
+    cur1 = *io_r1;
+    for (;cur0 < REX_MAX_UNICODE_VAL;)
+    {
+        rex_mcset_body_simplify(
+            i_body,
+            &cur0,
+            &cur1
+        );
+        if (REX_INTERSECTION_EXISTS(cur0, cur1, *io_r0, *io_r1))
+        {
+            if (*io_r0 < cur0)
+            {
+                *io_r1 = cur0-1;
+                return;
+            }
+            if (*io_r0 > cur0 && *io_r1 < cur1)
+            {
+                *io_r0 = REX_MAX_UNICODE_VAL+1;
+                *io_r1 = REX_MAX_UNICODE_VAL+1;
+                return;
+            }
+            if(*io_r1 > cur1)
+            {
+                *io_r0 = cur1+1;
+                cur0 = *io_r0;
+                cur1 = *io_r1;
+                continue;
+            }
+        }
+    }
+}
+
 void print_ranges(
     char * re_str
 )
@@ -164,13 +211,10 @@ void print_ranges_inverted(
     char * re_str
 )
 {
-    uint32_t cp0, cp1;
-    uint32_t inv0, inv1;
-    inv0 = 0;
-    inv1 = 0;
+    uint32_t cp0, cp1;    
     cp0 = 0, cp1 = REX_MAX_UNICODE_VAL;
     for(;;) {
-        rex_mcset_body_simplify(
+        rex_mcset_body_simplify_inverted(
             re_str,
             &cp0,
             &cp1
@@ -182,7 +226,6 @@ void print_ranges_inverted(
     };
     puts("\n");
 }
-
 
 int main(int argc, char ** argv)
 {
@@ -224,6 +267,7 @@ int main(int argc, char ** argv)
         puts("As sorted Ranges:");
         if (re_str[1] == '^')
         {
+            print_ranges_inverted(re_str+2);
         }else
         {
             print_ranges(re_str+1);
