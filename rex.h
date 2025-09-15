@@ -58,6 +58,7 @@ typedef uint32_t rex_instruction_t;
  */
 #define REX_INSTRUCTION(op, imm) (((op) << 24) & (imm))
 /* REX_VM INSTRUCTION SET */
+#define REX_HALT_IMMEDIATE (0x81)
 /*
  * HALT_IMMEDIATE
  *       ______________________
@@ -68,8 +69,8 @@ typedef uint32_t rex_instruction_t;
  *      OP = 0b10000001
  *      If current codepoint matches immediate value cp0 halt the thread
  */
-#define REX_HALT_IMMEDIATE (0x81)
 
+#define REX_HALT_NOT_IMMEDIATE (0x83)
 /* HALT_NOT_IMMEDIATE
  *       ______________________
  *      |8bit|      24 bit    |
@@ -79,8 +80,8 @@ typedef uint32_t rex_instruction_t;
  *      OP = 0b10000011
  *      If current codepoint does not match immediate value cp0 halt the thread
 */
-#define REX_HALT_NOT_IMMEDIATE (0x83)
 
+#define REX_LOAD_RANGE_MAX_VAL (0xC2)
 /* LOAD_RANGE_MAX_VAL
  *       ______________________
  *      |8bit|      24 bit    |
@@ -90,7 +91,8 @@ typedef uint32_t rex_instruction_t;
  *      OP = 0b11000010
  *      Load the codepoint cp1 into the RANGE_MAX_VALUE register
  */
-#define REX_LOAD_RANGE_MAX_VAL (0xC2)
+
+#define REX_HALT_RANGE (82)
 /* HALT_RANGE
  *       ______________________
  *      |8bit|      24 bit    |
@@ -103,7 +105,8 @@ typedef uint32_t rex_instruction_t;
  *      Codepoint range top in register RANGE_MAX_VALUE: cp1
  *      If cp0 <= cp <= cp1 halt the current thread
  */
-#define REX_HALT_RANGE (82)
+
+#define REX_MATCH (0xFF)
 /* MATCH
  *       ______________________
  *      |8bit|      24 bit    |
@@ -114,7 +117,8 @@ typedef uint32_t rex_instruction_t;
  *      Set uniform MATCH_FOUND to true
  *      Set unform  MATCH_SIZE to current codepoint index
  */
-#define REX_MATCH (0xFF)
+
+#define REX_SPLIT (0x40)
 /* SPLIT
  *       ______________________
  *      |2bit|      30 bit    |
@@ -124,8 +128,8 @@ typedef uint32_t rex_instruction_t;
  *      OP = 0b01
  *      Spawn a new thread with PROGRAM_COUNTER initialized to pc1
  */
-#define REX_SPLIT (0x40)
     
+#define REX_JUMP (0x0)
 /* JUMP
  *       ______________________
  *      |2bit|      30 bit    |
@@ -135,7 +139,6 @@ typedef uint32_t rex_instruction_t;
  *      OP = 0b00
  *      Set this threads PROGRAM_COUNTER to pc1
 */
-#define REX_JUMP (0x0)
 
 /* PARSERS */
 
@@ -308,7 +311,7 @@ rex_parse_hex_digit(
 
     /* counts as a null terminator check */
     if (hex < '0') return 0; 
-    if (hex > '0' && hex < 'A') return 0; 
+    if (hex > '9' && hex < 'A') return 0; 
 
     /* shift a-f to A-F */
     if (hex >= 'a' && hex <= 'f') hex -= ('a' - 'A');
@@ -336,7 +339,7 @@ rex_parse_fixed_len_hex(
     uint32_t shift;
     l = 0;
     out = 0;
-    shift = 32 - 4;
+    shift = i_hex_len * 4 - 4;
     for (j = 0; j < i_hex_len; j++)
     {
         /* counts as a null terminator check */
@@ -406,14 +409,14 @@ rex_parse_single_char(
             cp = '\v';
             break;
         case 'u':
-            l++;
             i = rex_parse_fixed_len_hex(i_str + l, i_len - l, 4, &cp);
-            l = i ? l+i : 0;
+            if (i == 0 || cp > REX_MAX_UNICODE_VAL) return 0;
+            l+=i;
             break;
         case 'U':
-            l++;
             i = rex_parse_fixed_len_hex(i_str + l, i_len - l, 8, &cp);
-            l = i ? l+i : 0;
+            if (i == 0 || cp > REX_MAX_UNICODE_VAL) return 0;
+            l+=i;
             break;
         default:
         break;
@@ -695,41 +698,32 @@ static const rex_range_t rex_D_range_set[2] =
     {0, '0'-1}, {'9'+1, REX_MAX_UNICODE_VAL}
 };
 
-/* TODO: Pretty sure all of these precompiled sets are wrong */
-static size_t const rex_w_inst_set_sz = 7;
-static const rex_instruction_t rex_w_inst_set[] =
+/* Inserts 2 instructions */
+#define REX_HALT_RANGE_INSTRUCTIONS(r0, r1)      \
+    REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, r1), \
+    REX_INSTRUCTION(REX_HALT_RANGE, r0)
+
+static size_t const rex_w_inst_set_sz = 10;
+static const rex_instruction_t rex_w_inst_set[10] =
 {
-    /* 0 to 'a'-1 */
-    REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, 'a'-1),
-    REX_INSTRUCTION(REX_HALT_RANGE, 0),
-    /* 'z'+1 to 'A'-1 */
-    REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, 'A'-1),
-    REX_INSTRUCTION(REX_HALT_RANGE, 'z'+1),
-    /* 'Z'+1 to '0'-1 */
-    REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, '0'-1),
-    REX_INSTRUCTION(REX_HALT_RANGE, 'Z'+1),
-    /* '9'+1 to '_'-1 AND '_'+1 to MAX_VAL */
-    REX_INSTRUCTION(REX_HALT_NOT_IMMEDIATE, '_')
+    REX_HALT_RANGE_INSTRUCTIONS(0, '0'-1),
+    REX_HALT_RANGE_INSTRUCTIONS('9'+1, 'A'-1),
+    REX_HALT_RANGE_INSTRUCTIONS('Z'+1, '_'-1),
+    REX_HALT_RANGE_INSTRUCTIONS('_'+1, 'a'-1),
+    REX_HALT_RANGE_INSTRUCTIONS('z'+1, REX_MAX_UNICODE_VAL),
 };
 
 static size_t const rex_W_inst_set_sz = 7;
-static const rex_instruction_t rex_W_inst_set[] =
+static const rex_instruction_t rex_W_inst_set[7] =
 {
-    /* a to z */
-    REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, 'z'),
-    REX_INSTRUCTION(REX_HALT_RANGE, 'a'),
-    /* A to Z */
-    REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, 'Z'),
-    REX_INSTRUCTION(REX_HALT_RANGE, 'A'),
-    /* 0 to 9 */
-    REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, '9'),
-    REX_INSTRUCTION(REX_HALT_RANGE, '0'),
-    /* '_' */
-    REX_INSTRUCTION(REX_HALT_IMMEDIATE, '_')
+    REX_HALT_RANGE_INSTRUCTIONS('0', '9'),
+    REX_HALT_RANGE_INSTRUCTIONS('A', 'Z'),
+    REX_HALT_RANGE_INSTRUCTIONS('a', 'z'),
+    REX_INSTRUCTION(REX_HALT_IMMEDIATE, '_'),
 };
 
 static size_t const rex_s_inst_set_sz = 5;
-static const rex_instruction_t rex_s_inst_set[] =
+static const rex_instruction_t rex_s_inst_set[5] =
 {
     /* 0 to '\t'-1 */
     REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, '\t'-1),
@@ -742,17 +736,16 @@ static const rex_instruction_t rex_s_inst_set[] =
 };
 
 static size_t const rex_S_inst_set_sz = 3;
-static const rex_instruction_t rex_S_inst_set[] =
+static const rex_instruction_t rex_S_inst_set[3] =
 {
     /*  '\t' to '\r' */
-    REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, '\r'),
-    REX_INSTRUCTION(REX_HALT_RANGE, '\t'),
+    REX_HALT_RANGE_INSTRUCTIONS('\t', '\r'),
     /* '_' */
     REX_INSTRUCTION(REX_HALT_IMMEDIATE, ' ')
 };
 
 static size_t const rex_d_inst_set_sz = 4;
-static const rex_instruction_t rex_d_inst_set[] =
+static const rex_instruction_t rex_d_inst_set[4] =
 {
     /* 0 to '0'-1 */
     REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, '0'-1),
@@ -764,7 +757,7 @@ static const rex_instruction_t rex_d_inst_set[] =
 };
 
 static size_t const rex_D_inst_set_sz = 2;
-static const rex_instruction_t rex_D_inst_set[] =
+static const rex_instruction_t rex_D_inst_set[2] =
 {
     /* '0' to '9' */
     REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, '9'),
@@ -772,19 +765,253 @@ static const rex_instruction_t rex_D_inst_set[] =
 
 };
 
-/* Charset must be validated with rex_parse_charset() before invocation */
+/* Helper functions for extracting character ranges from character sets */
+#define REX_MAX(start0, start1) \
+    (((start0) > (start1))? (start0) : (start1))
+#define REX_MIN(start0, start1) \
+    (((start0) < (start1))? (start0) : (start1))
+#define REX_INTERSECTION_EXISTS(r0_start, r0_end, r1_start, r1_end) \
+    (REX_MAX(r0_start, r1_start) <= REX_MIN(r0_end, r1_end))
+#define REX_MIN_INTERSECTION_START(min0, min1, cur0, cur1, super0, super1) \
+    (REX_INTERSECTION_EXISTS(cur0, cur1, super0, super1) ?                 \
+        REX_MIN(min0, cur0) : min0)
+#define REX_MIN_INTERSECTION_END(min0, min1, cur0, cur1, super0, super1) \
+    (REX_INTERSECTION_EXISTS(cur0, cur1, super0, super1) ?               \
+        ((min0 < cur0) ? min1 : cur1) : min1)
+
+static inline void rex_mcset_body_range_sort(
+    const char * const i_body,
+    uint32_t * const io_r0,
+    uint32_t * const io_r1
+)
+{
+    size_t l, i, ri, rsz;
+    uint32_t cp0, cp1;
+    uint32_t min_cp0, min_cp1;
+    min_cp0 = REX_MAX_UNICODE_VAL + 1;
+    min_cp1 = REX_MAX_UNICODE_VAL + 1;
+    for (
+        l = 0, i = 0, ri =0;
+        i_body[l] != ']';
+        l+=i,
+        min_cp0 = REX_MIN_INTERSECTION_START(
+            min_cp0, min_cp1, cp0, cp1, *io_r0, *io_r1),
+        min_cp1 = REX_MIN_INTERSECTION_END(
+            min_cp0, min_cp1, cp0, cp1, *io_r0, *io_r1)
+    )
+    {
+        i = rex_parse_multichar_range(i_body + l, SIZE_MAX, &cp0, &cp1);
+        if (i) continue;
+
+        i = rex_parse_single_char(i_body + l, SIZE_MAX, &cp0);
+        if(i){
+            cp1 = cp0;
+            continue;
+        }
+
+        i = rex_parse_multichar_escape(i_body + l, SIZE_MAX);
+        if (i)
+        {
+            switch(i_body[l + 1])
+            {
+            case 'W':
+                rsz = rex_W_range_set_sz;
+                cp0 = rex_W_range_set[ri].r0;
+                cp1 = rex_W_range_set[ri].r1;
+                break;
+            case 'w':
+                rsz = rex_w_range_set_sz;
+                cp0 = rex_w_range_set[ri].r0;
+                cp1 = rex_w_range_set[ri].r1;
+                break;
+            case 'S':
+                rsz = rex_S_range_set_sz;
+                cp0 = rex_S_range_set[ri].r0;
+                cp1 = rex_S_range_set[ri].r1;
+                break;
+            case 's':
+                rsz = rex_s_range_set_sz;
+                cp0 = rex_s_range_set[ri].r0;
+                cp1 = rex_s_range_set[ri].r1;
+                break;
+            case 'D':
+                rsz = rex_D_range_set_sz;
+                cp0 = rex_D_range_set[ri].r0;
+                cp1 = rex_D_range_set[ri].r1;
+                break;
+            case 'd':
+                rsz = rex_d_range_set_sz;
+                cp0 = rex_d_range_set[ri].r0;
+                cp1 = rex_d_range_set[ri].r1;
+                break;
+            }
+            ri++;
+            i = (ri == rsz)? i : 0;
+            ri = (ri == rsz)? 0 : ri;
+            continue;
+        }
+    }
+    *io_r0 = min_cp0;
+    *io_r1 = min_cp1;
+}
+
+/* 
+ * Takes a range [*io_r0, *io_r1] as input
+ * Finds the least range that is a mutual subset of i_body and [*io_r0, *io_r1]
+ * If no subset is found, *io_r0 == *io_r1 > CODEPOINT_MAX_VAL
+ *
+ * No validation performed against i_body
+ * Inputting UINT32_MAX breaks this function
+ */
+static inline void rex_mcset_body_simplify(
+    const char * const i_body,
+    uint32_t * const io_r0,
+    uint32_t * const io_r1
+)
+{
+    uint32_t cp0, cp1;
+    uint32_t min_cp0, min_cp1;
+
+    min_cp0 = *io_r0;
+    min_cp1 = *io_r1;
+    rex_mcset_body_range_sort(
+        i_body,
+        &min_cp0,
+        &min_cp1
+    );
+    if (min_cp1 < REX_MAX_UNICODE_VAL) for(;;) {
+        cp0 = min_cp1+1;
+        cp1 = REX_MAX_UNICODE_VAL;
+        rex_mcset_body_range_sort(
+            i_body,
+            &cp0,
+            &cp1
+        );
+        if (cp0 > REX_MIN(min_cp1+1, REX_MAX_UNICODE_VAL)) break;
+        /* Merge ranges */
+        min_cp1 = cp1;
+    };
+    *io_r0 = min_cp0;
+    *io_r1 = min_cp1;
+}
+
+
+/* 
+ * Takes a range [*io_r0, *io_r1] as input
+ * Finds the least range that is a subset [*io_r0, *io_r1] and not i_body
+ * If no subset is found, *io_r0 == *io_r1 > CODEPOINT_MAX_VAL
+ *
+ * No validation performed against i_body
+ * Inputting UINT32_MAX breaks this function
+ */
+static inline void rex_mcset_body_simplify_inverted(
+    const char * const i_body,
+    uint32_t * const io_r0,
+    uint32_t * const io_r1
+)
+{
+    uint32_t cur0;
+    uint32_t cur1;
+
+    cur0 = *io_r0;
+    cur1 = *io_r1;
+    for (;cur0 < REX_MAX_UNICODE_VAL;)
+    {
+        rex_mcset_body_simplify(
+            i_body,
+            &cur0,
+            &cur1
+        );
+        if (REX_INTERSECTION_EXISTS(cur0, cur1, *io_r0, *io_r1))
+        {
+            if (*io_r0 < cur0)
+            {
+                *io_r1 = cur0-1;
+                return;
+            }
+            if (*io_r0 > cur0 && *io_r1 < cur1)
+            {
+                *io_r0 = REX_MAX_UNICODE_VAL+1;
+                *io_r1 = REX_MAX_UNICODE_VAL+1;
+                return;
+            }
+            if(*io_r1 > cur1)
+            {
+                *io_r0 = cur1+1;
+                cur0 = *io_r0;
+                cur1 = *io_r1;
+                continue;
+            }
+        }
+    }
+}
+
 static inline size_t
-rex_compile_charset(
+rex_compile_mcset(
     const char * const i_cs,
-    const size_t len,
     rex_instruction_t * const o_prog
 )
 {
+    uint32_t r0, r1;
+    size_t sz = 0;
+    r0 = 0;
+    r1 = REX_MAX_UNICODE_VAL;
+    for (
+        r0 = 0, r1 = REX_MAX_UNICODE_VAL;
+        ;
+        r0 = r1 +1, r1 = REX_MAX_UNICODE_VAL
+        )
+    {
+        /* The inversion looks backwards but isn't 
+         * this inserts halt instructions for bad ranges
+         */
+        if (i_cs[2] == '^')
+        {
+            rex_mcset_body_simplify(
+                i_cs+2,
+                &r0, &r1
+            );
+        }else
+        {
+            rex_mcset_body_simplify_inverted(
+                i_cs+1,
+                &r0, &r1
+            );
+        }
+        if (r0 < REX_MAX_UNICODE_VAL) break;
+        if (r0 == r1)
+        {
+            if (o_prog) 
+                o_prog[sz] = REX_INSTRUCTION(REX_HALT_IMMEDIATE, r0);
+            sz++;
+        }else
+        {
+            if (o_prog)
+            {
+                o_prog[sz] = REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, r1);
+                o_prog[sz+1] = REX_INSTRUCTION(REX_HALT_RANGE, r0);
+            }
+            sz += 2;
+        }
+    }
+    return sz;
+}
 
+/* 
+ * Returns compile size
+ *
+ * Charset must be validated with rex_parse_charset() before invocation */
+static inline size_t
+rex_compile_charset(
+    const char * const i_cs,
+    rex_instruction_t * const o_prog
+)
+{
     const char * cp = i_cs;
     switch (*cp)
     {
     case '[':
+        return rex_compile_mcset(i_cs, o_prog);
     case '\\':
         cp++;
         switch(*cp)
