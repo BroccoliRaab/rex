@@ -402,10 +402,10 @@ rex_parse_single_char(
         case 'n':
             cp = '\n';
             break;
-        case '\r':
+        case 'r':
             cp = '\r';
             break;
-        case '\v':
+        case 'v':
             cp = '\v';
             break;
         case 'u':
