@@ -42,7 +42,7 @@ typedef uint32_t rex_instruction_t;
 
 /* UNIFORMS */
 /* MATCH_FOUND 
- *      True if REX_VM has found a matching pattern in text
+*      True if REX_VM has found a matching pattern in text
  *
  * MATCH_SIZE
  *      Holds the number of codepoints searched for pattern
@@ -56,6 +56,43 @@ typedef uint32_t rex_instruction_t;
  * RANGE_MAX_VALUE
  *      Stores the max value of a code point range
  */
+
+/* TODO: ISA overhaul from most to least important
+ * Advance Character pointer
+ * Submatching
+ * Add boundary assertions  \b \B \$ \^
+ * x{n,m} reptition ( Not sure if this will change isa or generate more instructions or will be implemented at all 
+ * */
+
+/* ISA
+ * OLD:
+ * HALT_IMMEDIATE
+ * HALT_NOT_IMMEDIATE
+ * LOAD_RANGE_MAX_VAL
+ * HALT_RANGE
+ * MATCH
+ * SPLIT
+ * JUMP
+ *
+ * NEW:
+ * HI           Halt Immediate
+ * HIA          Halt Immediate Advance
+ * HNI          Halt Not Immediate
+ * HNIA         Halt Not Immediate Advance
+ * HR           Halt Range
+ * HRA          Halt Range Advance
+ * AWB          Assert Word Boundary
+ * ANWB         Assert Not Word Boundary
+ * AE           Assert End
+ * AS           Assert Start
+ * LR           Load Range
+ * SS           Save Submatch
+ * M            Match
+ * B            Branch/Split
+ * BWP          Branch/Split With Priority
+ * J            Jump
+ * */
+
 #define REX_INSTRUCTION(op, imm) (((op) << 24) & (imm))
 /* REX_VM INSTRUCTION SET */
 #define REX_HALT_IMMEDIATE (0x81)
@@ -160,7 +197,7 @@ enum rex_token_e
 {
     /* Illegal first byte for utf8 sequence */
     REX_TOKEN_CHARSET = 0x80,
-    REX_TOKEN_RPAREN,       
+    REX_TOKEN_RPAREN, /* Token is removed at AST construction time */
     REX_TOKEN_LPAREN,
     REX_TOKEN_ALTERNATION,
     REX_TOKEN_CONCAT,
@@ -170,6 +207,12 @@ enum rex_token_e
     REX_TOKEN_QUESTION_LAZY,
     REX_TOKEN_PLUS,
     REX_TOKEN_PLUS_LAZY,
+    /* Tokens inserted at compile time */
+    REX_TOKEN_ALTERNATION_INFIX,
+    REX_TOKEN_ALTERNATION_SUFFIX,
+    REX_TOKEN_QUESTION_SUFFIX,
+    REX_TOKEN_KLEEN_SUFFIX,
+    REX_TOKEN_PLUS_SUFFIX,
 };
 typedef enum rex_token_e rex_token_t;
 
@@ -635,7 +678,7 @@ typedef struct rex_range_s rex_range_t;
 
 struct rex_compiler_ast_ctx_s
 {
-    void * ast_top;
+    uint8_t * ast_top;
     size_t ast_sz; 
 };
 
@@ -915,6 +958,7 @@ static inline void rex_mcset_body_simplify_inverted(
 
     cur0 = *io_r0;
     cur1 = *io_r1;
+    /* TODO: This looks like an infinite loop. Fix or comment */
     for (;cur0 < REX_MAX_UNICODE_VAL;)
     {
         rex_mcset_body_simplify(
@@ -922,6 +966,9 @@ static inline void rex_mcset_body_simplify_inverted(
             &cur0,
             &cur1
         );
+        /* TODO:
+         * if this isn't true it loops forever?
+         * if its always true then the if block is pointless */
         if (REX_INTERSECTION_EXISTS(cur0, cur1, *io_r0, *io_r1))
         {
             if (*io_r0 < cur0)
@@ -1187,4 +1234,98 @@ rex_build_ast(
     }
     io_compiler->ctx.ast_ctx.ast_top = ast_top;
     return 0;
+}
+
+static inline size_t
+rex_count_ast(
+    const uint8_t * const i_ast,
+    const size_t i_max_sz
+)
+{
+    size_t sz, i, j, leaves;
+    sz = 0;
+    leaves = 1;
+    for (i = 0;i < i_max_sz;i++) switch((rex_token_t) i_ast[i])
+    {
+    case REX_TOKEN_CONCAT:
+    case REX_TOKEN_ALTERNATION:
+        leaves++;
+    /* FALLTHROUGH */
+    case REX_TOKEN_PLUS:
+    case REX_TOKEN_PLUS_LAZY:
+    case REX_TOKEN_KLEEN:
+    case REX_TOKEN_KLEEN_LAZY:
+    case REX_TOKEN_QUESTION:
+    case REX_TOKEN_QUESTION_LAZY:
+    case REX_TOKEN_LPAREN:
+        sz++;
+        break;
+    /* AST is invalid */
+    case REX_TOKEN_RPAREN:
+    case REX_TOKEN_CHARSET:
+        return 0;
+    //TODO: SUFFIX/INFIX compile tokens
+    default:
+        if (!leaves) return 0;
+        j = rex_parse_charset((const char *) i_ast+i, SIZE_MAX);
+        if (!j) return 0;
+        sz += j;
+        leaves--;
+        if ( leaves == 0) return sz;
+    }
+    /* AST is invalid */
+    return 0;
+}
+
+static inline int 
+rex_ast_rot(
+    rex_compiler_t * const io_compiler
+)
+{
+    size_t r, l, toswap, move_sz, swap_sz;
+    uint8_t * const ast_top = io_compiler->ctx.ast_ctx.ast_top;
+    const size_t ast_sz = io_compiler->ctx.ast_ctx.ast_sz;
+    r = rex_count_ast(
+        ast_top,
+        ast_sz
+    );
+    if(!r) return 1;
+    l = rex_count_ast(
+        ast_top + r,
+        ast_sz - r
+    );
+    if (!l) return 1;
+    swap_sz = ((uint8_t *) io_compiler->memory) - ast_top;
+    for(toswap = r; toswap != 0; toswap -= move_sz)
+    {
+        move_sz = REX_MIN(toswap, swap_sz);
+        memmove(ast_top-move_sz, ast_top, ast_sz);
+        memmove(ast_top+ast_sz-move_sz ,ast_top-move_sz, move_sz);
+    }
+    return 0;
+}
+
+static inline int
+rex_ast_compile(
+    rex_compiler_t *io_compiler,
+    uint32_t *o_prog,
+    size_t i_prog_sz
+)
+{
+    size_t  prog_i = 0;
+    size_t ast_sz = io_compiler->ctx.ast_ctx.ast_sz;
+    uint8_t *ast_top = io_compiler->ctx.ast_ctx.ast_top;
+    while(ast_sz) switch((rex_token_t) *ast_top)
+    {
+    case REX_TOKEN_CONCAT:
+        ast_top++;
+        rex_ast_rot(io_compiler);
+        break;
+    case REX_TOKEN_ALTERNATION:
+        ast_top++;
+        rex_ast_rot(io_compiler);
+        o_prog[prog_i] = REX_INSTRUCTION(REX_SPLIT, prog_i+1);
+
+    }
+    
 }
