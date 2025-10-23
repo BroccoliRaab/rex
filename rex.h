@@ -93,7 +93,44 @@ typedef uint32_t rex_instruction_t;
  * J            Jump
  * */
 
+#define REX_ISA_ITYPE_X(X)        \
+    X(HI, 0x81000000)           \
+    X(HIA, 0x82000000)          \
+    X(HNI, 0x83000000)          \
+    X(HNIA, 0x84000000)         \
+    X(HR, 0x85000000)           \
+    X(HRA, 0x86000000)          \
+    X(AWB, 0xA1000000)          \
+    X(ANWB, 0xA2000000)         \
+    X(AE, 0xA3000000)           \
+    X(AS, 0xA4000000)           \
+    X(LR, 0xC1000000)           \
+    X(SS, 0xC2000000)           \
+    X(B, 0x40000000)            \
+    X(BWP, 0xC0000000)          \
+    X(J, 0x00000000)            
+
+#define REX_ISA_MATCH 0xC2000000
+
+#define REX_ISA_X(X)        \
+    REX_ISA_ITYPE_X(X)      \
+    X(M, REX_ISA_MATCH)
+
+#define REX_INST_IS_JUMP_TYPE(inst) ((inst) >> 6 != 0x2)
+
+#define REX_OP_FROM_INST(inst) (((inst) >> 24 ) &   \
+        (REX_INST_IS_JUMP_TYPE(inst) ? 0xC0 : 0xFF))
+
 #define REX_INSTRUCTION(op, imm) (((op) << 24) & (imm))
+
+
+#define REX_OPCODE_ENUM_EXPAND(opcode, hex) REX_OPCODE_##opcode = hex >> 24,
+typedef enum rex_opcode_e
+{
+    REX_ISA_X(REX_OPCODE_ENUM_EXPAND)
+}rex_opcode_t;
+
+// TODO: Replace old isa
 /* REX_VM INSTRUCTION SET */
 #define REX_HALT_IMMEDIATE (0x81)
 /*
