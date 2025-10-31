@@ -11,6 +11,11 @@
 #define REX_MEMMOVE memmove
 #endif
 
+#ifndef REX_MEMSET
+#include <string.h>
+#define REX_MEMSET memset
+#endif
+
 /* THREAD SAFTEY */
 /* It is unsafe to access any REX_VM object from multiple threads concurrently 
  * In order to practice thread safety each thread will need to own its own REX_VM object 
@@ -22,10 +27,10 @@
 #define REX_MAX_UNICODE_VAL (0x00FFFFFF)
 
 /* Error Code */
-#define REX_SUCESS          (0)
-#define REX_OUT_OF_MEMORY   (1)
-#define REX_SYNTAX_ERROR    (2)
-#define REX_BAD_STATE       (3)
+#define REX_SUCESS                  (0)
+#define REX_OUT_OF_MEMORY           (1)
+#define REX_SYNTAX_ERROR            (2)
+#define REX_BAD_INSTRUCTION         (3)
 
 /* TYPES */
 typedef uint32_t rex_instruction_t;
@@ -104,8 +109,8 @@ typedef uint32_t rex_instruction_t;
     X(ANWB, 0xA2000000)         \
     X(AE, 0xA3000000)           \
     X(AS, 0xA4000000)           \
-    X(LR, 0xC1000000)           \
-    X(SS, 0xC2000000)           \
+    X(LR, 0xB1000000)           \
+    X(SS, 0xB2000000)           \
     X(B, 0x40000000)            \
     X(BWP, 0xC0000000)          \
     X(J, 0x00000000)            
@@ -335,7 +340,8 @@ rex_parse_utf8_codepoint(
     case REX_UTF8_COUNT_LEADING_ONES:
         leading_ones++;
         /* Shift by current ones count and test the most significant bit */
-        state = ((i_str[l] << leading_ones) & REX_UTF8_BYTE_MOST_SIGNIFICANT_BIT) ?
+        state = 
+            ((i_str[l] << leading_ones) & REX_UTF8_BYTE_MOST_SIGNIFICANT_BIT) ?
             REX_UTF8_COUNT_LEADING_ONES :
             REX_UTF8_VALIDATE_FIRST_BYTE;
         break;
