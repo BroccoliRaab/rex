@@ -31,6 +31,8 @@
 #define REX_OUT_OF_MEMORY           (1)
 #define REX_SYNTAX_ERROR            (2)
 #define REX_BAD_INSTRUCTION         (3)
+#define REX_ENCODING_ERROR          (4)
+#define REX_BAD_PARAM               (5)
 
 /* TYPES */
 typedef uint32_t rex_instruction_t;
@@ -98,7 +100,7 @@ typedef uint32_t rex_instruction_t;
  * J            Jump
  * */
 
-#define REX_ISA_ITYPE_X(X)        \
+#define REX_ISA_ITYPE_X(X)      \
     X(HI, 0x81000000)           \
     X(HIA, 0x82000000)          \
     X(HNI, 0x83000000)          \
@@ -115,19 +117,24 @@ typedef uint32_t rex_instruction_t;
     X(BWP, 0xC0000000)          \
     X(J, 0x00000000)            
 
-#define REX_ISA_MATCH 0xC2000000
+#define REX_ISA_MATCH 0x90000000
+
+#define REX_JUMP_IMM_MASK 0x3FFFFFFF
+#define REX_NORMAL_IMM_MASK 0x00FFFFFF
 
 #define REX_ISA_X(X)        \
     REX_ISA_ITYPE_X(X)      \
     X(M, REX_ISA_MATCH)
 
-#define REX_INST_IS_JUMP_TYPE(inst) ((inst) >> 6 != 0x2)
+#define REX_INST_IS_JUMP_TYPE(inst) ((inst) >> 30 != 0x2)
 
 #define REX_OP_FROM_INST(inst) (((inst) >> 24 ) &   \
         (REX_INST_IS_JUMP_TYPE(inst) ? 0xC0 : 0xFF))
 
-#define REX_INSTRUCTION(op, imm) (((op) << 24) & (imm))
+#define REX_IMM_FROM_INST(inst) ((inst) &   \
+        (REX_INST_IS_JUMP_TYPE(inst) ? REX_JUMP_IMM_MASK : REX_NORMAL_IMM_MASK))
 
+#define REX_INSTRUCTION(op, imm) (((op) << 24) | (imm))
 
 #define REX_OPCODE_ENUM_EXPAND(opcode, hex) REX_OPCODE_##opcode = hex >> 24,
 typedef enum rex_opcode_e
