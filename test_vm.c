@@ -3,6 +3,7 @@
 
 
 #include <stdio.h>
+#include <stdlib.h>
 
 typedef struct rex_match_s rex_match_t;
 typedef struct rex_vm_s rex_vm_t;
@@ -208,9 +209,7 @@ rex_vm_exec(
     uint32_t cp, imm, pc, inst;
     uint32_t rcp1 = 0;
     void * cthread;
-    size_t thread_max;
     int match = 0;
-    // TODO: a million null checks
     if (!io_vm || !i_string || !i_prog || !io_matches_sz) return REX_BAD_PARAM;
     thread_sz = *io_matches_sz * sizeof(rex_match_t) + sizeof(uint32_t);
     if (thread_sz * i_prog_sz * 2 > io_vm->memory_sz) return REX_OUT_OF_MEMORY;
@@ -360,7 +359,8 @@ const uint32_t Alphanumeric[12] ={
     REX_INSTRUCTION(REX_OPCODE_M, 0)
 };
 
-const char * Alphanumeric_pass[63] = {
+#define ALPHANUMERIC_CHARS 63
+const char * Alphanumeric_pass[ALPHANUMERIC_CHARS] = {
 "A",
 "a",
 "B",
@@ -426,9 +426,36 @@ const char * Alphanumeric_pass[63] = {
 "_"
 };
 
-int main(void)
+const char * Alphanumeric_fail[] = {
+"",
+"?",
+"/",
+",",
+".",
+"`",
+"~",
+"!",
+"@",
+"#",
+"$",
+"%",
+"^",
+"&",
+"*",
+"(",
+")",
+"-",
+"=",
+"+",
+"?123",
+"@abc"
+};
+
+
+#define TEST_STR_SZ 512
+int test_alphanumeric_single(void)
 {
-    size_t i, matches;
+    size_t i,  matches;
     matches = 0;
     int match, err;
     int ret = 0;
@@ -449,18 +476,121 @@ int main(void)
             &matches,
             &match
         );
-        printf(
-            "MATCHES \"%s\": %s",  
-            Alphanumeric_pass[i],
-            match && !err ? "PASS" : "FAIL"
-        );
-        ret = match && !err  ? 1 : ret;
-        if (err)
-        {
-            printf(" WITH ERROR: %d\n",err); 
-        }else{
-            putchar('\n');
-        }
+        ret = !match || err  ? 1 : ret;
+        if (ret) break;
     }
+    printf(
+        "MATCHES EVERY ALPHANUMERIC SINGLE: %s",  
+        match && !err ? "PASS" : "FAIL"
+    );
+    if (err)
+    {
+        printf(" WITH ERROR: %d\n",err); 
+    }else{
+        putchar('\n');
+    }
+
+    return  ret;
+}
+int
+test_alphanumeric_random_sequence(void)
+{
+    size_t i, j, matches;
+    matches = 0;
+    int match, err;
+    int ret = 0;
+    int ri;
+    uint8_t buffer[128];
+    rex_vm_t  vm;
+    char test_str[TEST_STR_SZ] = {0};
+
+    vm.memory = buffer;
+    vm.memory_sz = 128;
+
+    for ( i = 0; i < 0xFFF; i++){
+        for ( j = 0; j < TEST_STR_SZ-1; j++)
+        {
+            ri = (uint32_t) rand();
+            ri %= 63;
+            test_str[j] = Alphanumeric_pass[ri][0];
+        }
+        test_str[(((uint32_t) rand()) % (TEST_STR_SZ-1))+1] = 0; 
+        err = rex_vm_exec(
+            &vm,
+            test_str,
+            TEST_STR_SZ,
+            Alphanumeric,
+            12,
+            NULL,
+            &matches,
+            &match
+        );
+        ret = !match || err  ? 1 : ret;
+        if (ret) break;
+        
+    }
+    printf(
+        "MATCHES RANDOM ALPHANUMERIC STRINGS: %s",  
+        match && !err ? "PASS" : "FAIL"
+    );
+    if (err)
+    {
+        printf(" WITH ERROR: %d\n",err); 
+    }else{
+        putchar('\n');
+    }
+    return ret;
+}
+int test_nonalphanumeric(void)
+{
+    size_t i,  matches;
+    matches = 0;
+    int match, err;
+    int ret = 0;
+    uint8_t buffer[128];
+    rex_vm_t  vm;
+    
+    vm.memory = buffer;
+    vm.memory_sz = 128;
+    for (i = 0; i < 22; i++)
+    {
+        err = rex_vm_exec(
+            &vm,
+            Alphanumeric_fail[i],
+            SIZE_MAX,
+            Alphanumeric,
+            12,
+            NULL,
+            &matches,
+            &match
+        );
+        ret = match || err  ? 1 : ret;
+        if (ret) break;
+    }
+    printf(
+        "MATCHES NON ALPHANUMERIC SEQUENCE: %s",  
+        !match && !err ? "PASS" : "FAIL"
+    );
+    if (err)
+    {
+        printf(" WITH ERROR: %d\n",err); 
+    }else{
+        putchar('\n');
+    }
+
+    return  ret;
+}
+
+int main(void)
+{
+    int ret = 0;
+    ret = test_alphanumeric_single();
+    if (ret) goto exit;
+    ret = test_alphanumeric_random_sequence();
+    if (ret) goto exit;
+    ret = test_nonalphanumeric();
+    if (ret) goto exit;
+
+exit:
     return ret;
 }
