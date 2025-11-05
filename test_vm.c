@@ -480,7 +480,7 @@ int test_alphanumeric_single(void)
         if (ret) break;
     }
     printf(
-        "MATCHES EVERY ALPHANUMERIC SINGLE: %s",  
+        "\\w+ MATCHES EVERY ALPHANUMERIC SINGLE: %s",  
         match && !err ? "PASS" : "FAIL"
     );
     if (err)
@@ -507,7 +507,7 @@ test_alphanumeric_random_sequence(void)
     vm.memory = buffer;
     vm.memory_sz = 128;
 
-    for ( i = 0; i < 0xFFF; i++){
+    for ( i = 0; i < 1024; i++){
         for ( j = 0; j < TEST_STR_SZ-1; j++)
         {
             ri = (uint32_t) rand();
@@ -530,7 +530,7 @@ test_alphanumeric_random_sequence(void)
         
     }
     printf(
-        "MATCHES RANDOM ALPHANUMERIC STRINGS: %s",  
+        "\\w+ MATCHES RANDOM ALPHANUMERIC STRINGS: %s",  
         match && !err ? "PASS" : "FAIL"
     );
     if (err)
@@ -568,7 +568,7 @@ int test_nonalphanumeric(void)
         if (ret) break;
     }
     printf(
-        "DOES NOT MATCH NONALPHANUMERIC SEQUENCE: %s",  
+        "\\w+ DOES NOT MATCH NONALPHANUMERIC SEQUENCE: %s",  
         !match && !err ? "PASS" : "FAIL"
     );
     if (err)
@@ -581,14 +581,417 @@ int test_nonalphanumeric(void)
     return  ret;
 }
 
+/* Test utf8 support on Misc symbols codepage
+ * U+2600 to U+26FF
+ * compiled regex for [\u2600-\u26FF]+
+ */
+rex_instruction_t unicode_misc_symbols[] ={
+    REX_INSTRUCTION(REX_OPCODE_LR, 0x2600-1), 
+    REX_INSTRUCTION(REX_OPCODE_HR, 0), 
+    REX_INSTRUCTION(REX_OPCODE_LR, REX_MAX_UNICODE_VAL), 
+    REX_INSTRUCTION(REX_OPCODE_HRA, 0x26FF+1), 
+    REX_INSTRUCTION(REX_OPCODE_BWP, 0),
+    REX_INSTRUCTION(REX_OPCODE_M, 0)
+};
+
+#define MISC_SYMBOL_CHARS 0x100
+const char * Misc_symbol_pass[MISC_SYMBOL_CHARS] = {
+"☀",
+"☁",
+"☂",
+"☃",
+"☄",
+"★",
+"☆",
+"☇",
+"☈",
+"☉",
+"☊",
+"☋",
+"☌",
+"☍",
+"☎",
+"☏",
+"☐",
+"☑",
+"☒",
+"☓",
+"☔",
+"☕",
+"☖",
+"☗",
+"☘",
+"☙",
+"☚",
+"☛",
+"☜",
+"☝",
+"☞",
+"☟",
+"☠",
+"☡",
+"☢",
+"☣",
+"☤",
+"☥",
+"☦",
+"☧",
+"☨",
+"☩",
+"☪",
+"☫",
+"☬",
+"☭",
+"☮",
+"☯",
+"☰",
+"☱",
+"☲",
+"☳",
+"☴",
+"☵",
+"☶",
+"☷",
+"☸",
+"☹",
+"☺",
+"☻",
+"☼",
+"☽",
+"☾",
+"☿",
+"♀",
+"♁",
+"♂",
+"♃",
+"♄",
+"♅",
+"♆",
+"♇",
+"♈",
+"♉",
+"♊",
+"♋",
+"♌",
+"♍",
+"♎",
+"♏",
+"♐",
+"♑",
+"♒",
+"♓",
+"♔",
+"♕",
+"♖",
+"♗",
+"♘",
+"♙",
+"♚",
+"♛",
+"♜",
+"♝",
+"♞",
+"♟",
+"♠",
+"♡",
+"♢",
+"♣",
+"♤",
+"♥",
+"♦",
+"♧",
+"♨",
+"♩",
+"♪",
+"♫",
+"♬",
+"♭",
+"♮",
+"♯",
+"♰",
+"♱",
+"♲",
+"♳",
+"♴",
+"♵",
+"♶",
+"♷",
+"♸",
+"♹",
+"♺",
+"♻",
+"♼",
+"♽",
+"♾",
+"♿",
+"⚀",
+"⚁",
+"⚂",
+"⚃",
+"⚄",
+"⚅",
+"⚆",
+"⚇",
+"⚈",
+"⚉",
+"⚊",
+"⚋",
+"⚌",
+"⚍",
+"⚎",
+"⚏",
+"⚐",
+"⚑",
+"⚒",
+"⚓",
+"⚔",
+"⚕",
+"⚖",
+"⚗",
+"⚘",
+"⚙",
+"⚚",
+"⚛",
+"⚜",
+"⚝",
+"⚞",
+"⚟",
+"⚠",
+"⚡",
+"⚢",
+"⚣",
+"⚤",
+"⚥",
+"⚦",
+"⚧",
+"⚨",
+"⚩",
+"⚪",
+"⚫",
+"⚬",
+"⚭",
+"⚮",
+"⚯",
+"⚰",
+"⚱",
+"⚲",
+"⚳",
+"⚴",
+"⚵",
+"⚶",
+"⚷",
+"⚸",
+"⚹",
+"⚺",
+"⚻",
+"⚼",
+"⚽",
+"⚾",
+"⚿",
+"⛀",
+"⛁",
+"⛂",
+"⛃",
+"⛄",
+"⛅",
+"⛆",
+"⛇",
+"⛈",
+"⛉",
+"⛊",
+"⛋",
+"⛌",
+"⛍",
+"⛎",
+"⛏",
+"⛐",
+"⛑",
+"⛒",
+"⛓",
+"⛔",
+"⛕",
+"⛖",
+"⛗",
+"⛘",
+"⛙",
+"⛚",
+"⛛",
+"⛜",
+"⛝",
+"⛞",
+"⛟",
+"⛠",
+"⛡",
+"⛢",
+"⛣",
+"⛤",
+"⛥",
+"⛦",
+"⛧",
+"⛨",
+"⛩",
+"⛪",
+"⛫",
+"⛬",
+"⛭",
+"⛮",
+"⛯",
+"⛰",
+"⛱",
+"⛲",
+"⛳",
+"⛴",
+"⛵",
+"⛶",
+"⛷",
+"⛸",
+"⛹",
+"⛺",
+"⛻",
+"⛼",
+"⛽",
+"⛾",
+"⛿",
+};
+
+int test_misc_symbol_single(void)
+{
+    size_t i,  matches;
+    matches = 0;
+    int match, err;
+    int ret = 0;
+    uint8_t buffer[128];
+    rex_vm_t  vm;
+    
+    vm.memory = buffer;
+    vm.memory_sz = 128;
+    for (i = 0; i < 0x100; i++)
+    {
+        err = rex_vm_exec(
+            &vm,
+            Misc_symbol_pass[i],
+            SIZE_MAX,
+            unicode_misc_symbols,
+            6,
+            NULL,
+            &matches,
+            &match
+        );
+        ret = !match || err  ? 1 : ret;
+        if (ret) break;
+    }
+    printf(
+        "[u+2600-u+26FF]+ MATCHES EVERY MISC SYMBOL CODEPAGE SINGLE: %s",  
+        match && !err ? "PASS" : "FAIL"
+    );
+    if (err)
+    {
+        printf(" WITH ERROR: %d\n",err); 
+    }else{
+        putchar('\n');
+    }
+
+    return  ret;
+}
+int
+test_misc_symbol_random_sequence(void)
+{
+    size_t i, j, matches;
+    matches = 0;
+    int match, err;
+    int ret = 0;
+    int ri;
+    uint8_t buffer[128];
+    rex_vm_t  vm;
+    char test_str[TEST_STR_SZ] = {0};
+
+    vm.memory = buffer;
+    vm.memory_sz = 128;
+
+    for ( i = 0; i < 1024; i++){
+        for ( j = 0; j < TEST_STR_SZ-1; j++)
+        {
+            ri = (uint32_t) rand();
+            ri %= 0x100;
+            test_str[j] = Misc_symbol_pass[ri][0];
+        }
+        test_str[(((uint32_t) rand()) % (TEST_STR_SZ-1))+1] = 0; 
+        err = rex_vm_exec(
+            &vm,
+            test_str,
+            TEST_STR_SZ,
+            unicode_misc_symbols,
+            6,
+            NULL,
+            &matches,
+            &match
+        );
+        ret = !match || err  ? 1 : ret;
+        if (ret) break;
+        
+    }
+    printf(
+        "[u+2600-u+26FF]+ MATCHES RANDOM MISC SYMBOL STRINGS: %s",  
+        match && !err ? "PASS" : "FAIL"
+    );
+    if (err)
+    {
+        printf(" WITH ERROR: %d\n",err); 
+    }else{
+        putchar('\n');
+    }
+    return ret;
+}
+int test_not_misc_symbol(void)
+{
+    size_t i,  matches;
+    matches = 0;
+    int match, err;
+    int ret = 0;
+    uint8_t buffer[128];
+    rex_vm_t  vm;
+    
+    vm.memory = buffer;
+    vm.memory_sz = 128;
+    for (i = 0; i < 22; i++)
+    {
+        err = rex_vm_exec(
+            &vm,
+            Alphanumeric_fail[i],
+            SIZE_MAX,
+            Alphanumeric,
+            12,
+            NULL,
+            &matches,
+            &match
+        );
+        ret = match || err  ? 1 : ret;
+        if (ret) break;
+    }
+    printf(
+        "[u+2600-u+26FF]+ DOES NOT MATCH SEQUENCE OUTSIDE PAGE: %s",  
+        !match && !err ? "PASS" : "FAIL"
+    );
+    if (err)
+    {
+        printf(" WITH ERROR: %d\n",err); 
+    }else{
+        putchar('\n');
+    }
+
+    return  ret;
+}
+
+
 int main(void)
 {
     int ret = 0;
-    ret = test_alphanumeric_single();
-    if (ret) goto exit;
-    ret = test_alphanumeric_random_sequence();
-    if (ret) goto exit;
-    ret = test_nonalphanumeric();
+    ret |= test_alphanumeric_single();
+    ret |= test_alphanumeric_random_sequence();
+    ret |= test_nonalphanumeric();
+    ret |= test_misc_symbol_single();
+    ret |= test_misc_symbol_random_sequence();
+    ret |= test_not_misc_symbol();
     if (ret) goto exit;
 
 exit:
