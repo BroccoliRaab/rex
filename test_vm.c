@@ -568,7 +568,7 @@ int test_nonalphanumeric(void)
         if (ret) break;
     }
     printf(
-        "MATCHES NON ALPHANUMERIC SEQUENCE: %s",  
+        "DOES NOT MATCH NONALPHANUMERIC SEQUENCE: %s",  
         !match && !err ? "PASS" : "FAIL"
     );
     if (err)
