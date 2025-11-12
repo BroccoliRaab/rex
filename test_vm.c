@@ -331,6 +331,7 @@ rex_vm_exec(
         clist = nlist;
         nlist = tmp;
         nlist.thread_count = 0;
+        if (cp == 0) break;
     }
     if (o_match_found) *o_match_found = match;
 
@@ -909,13 +910,15 @@ test_misc_symbol_random_sequence(void)
     vm.memory_sz = 128;
 
     for ( i = 0; i < 1024; i++){
-        for ( j = 0; j < TEST_STR_SZ-1; j++)
+        for ( j = 0; j < TEST_STR_SZ-4; j+=3)
         {
             ri = (uint32_t) rand();
             ri %= 0x100;
             test_str[j] = Misc_symbol_pass[ri][0];
+            test_str[j+1] = Misc_symbol_pass[ri][1];
+            test_str[j+2] = Misc_symbol_pass[ri][2];
         }
-        test_str[(((uint32_t) rand()) % (TEST_STR_SZ-1))+1] = 0; 
+
         err = rex_vm_exec(
             &vm,
             test_str,

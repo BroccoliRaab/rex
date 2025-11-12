@@ -308,89 +308,56 @@ rex_isreserved(const uint32_t cp)
  * Notes:
  * If reads a null terminator will return 1 and o_cp will be set to 0
  */
+
+/*TODO:
+ * implement a default clz and feature test 
+ */
+
+#define REX_CLZ8(i) __builtin_clz((((unsigned int)i)<< \
+    ((sizeof(unsigned int)-sizeof(uint8_t))*8)))
+
 static inline size_t
 rex_parse_utf8_codepoint(
-    const char * const i_str,
+    const unsigned char * const i_str,
     size_t i_len,
     uint32_t * const o_cp
-)
-{
-    enum
+){
+    uint8_t b;
+    uint8_t l, mask, shift, i;
+    uint32_t cp;
+    if (!(i_len && i_str)) return 0;
+    b = *i_str;
+    l = REX_CLZ8(~b); 
+    if (l > i_len) return 0;
+    cp = 0;
+    mask = 0xFF >> (l + 1);
+    shift = 6 * (l - 1);
+    cp =(b & mask) << shift; 
+    i = 1;
+    switch(l)
     {
-        REX_UTF8_FAIL,
-        REX_UTF8_DECODE_START,
-        REX_UTF8_COUNT_LEADING_ONES,
-        REX_UTF8_VALIDATE_FIRST_BYTE,
-        REX_UTF8_DECODE_FIRST_BYTE,
-        REX_UTF8_VALIDATE_TAIL_BYTE,
-        REX_UTF8_DECODE_TAIL_BYTE,
-        REX_UTF8_DECODE_ASCII,
-        REX_UTF8_SUCCESS
-    } state;
-    size_t l = 0;
-    uint8_t leading_ones = 0;
-    uint8_t tail_bytes = 0;
-    uint32_t cp = 0;
-    /* i_str validation */
-    state = i_str != NULL && i_len > 0 ? REX_UTF8_DECODE_START : REX_UTF8_FAIL;
-
-    for (;;) switch(state)
-    {
-    case REX_UTF8_FAIL:
-        return 0;
-    case REX_UTF8_DECODE_START:
-        state = REX_UTF8_IS_MULTIBYTE(i_str[l]) ?
-            REX_UTF8_COUNT_LEADING_ONES :
-            REX_UTF8_DECODE_ASCII;
-        break;
-    /* Leading ones count of the first byte indicates the length of the sequence */
-    case REX_UTF8_COUNT_LEADING_ONES:
-        leading_ones++;
-        /* Shift by current ones count and test the most significant bit */
-        state = 
-            ((i_str[l] << leading_ones) & REX_UTF8_BYTE_MOST_SIGNIFICANT_BIT) ?
-            REX_UTF8_COUNT_LEADING_ONES :
-            REX_UTF8_VALIDATE_FIRST_BYTE;
-        break;
-    case REX_UTF8_VALIDATE_FIRST_BYTE:
-        state = leading_ones >= REX_UTF8_MULTIBYTE_MIN &&
-                leading_ones <= REX_UTF8_MULTIBYTE_MAX ?
-                REX_UTF8_DECODE_FIRST_BYTE :
-                REX_UTF8_FAIL;
-        break;
-    case REX_UTF8_DECODE_FIRST_BYTE:
-        cp |= (
-                ((uint32_t) i_str[l]) &
-                REX_UTF8_SIGNIFICANT_BITMASK(leading_ones)
-            ) << (
-            REX_UTF8_TAIL_BYTE_SIGNIFICANT_BITS *
-            REX_UTF8_TAIL_BYTES(leading_ones)
-            );
-        state = l < i_len? REX_UTF8_VALIDATE_TAIL_BYTE : REX_UTF8_FAIL;
-        l++;
-        break;
-    case REX_UTF8_VALIDATE_TAIL_BYTE:
-        tail_bytes = leading_ones - 1;
-        state = (i_str[l] & REX_UTF8_TAIL_BYTE_LEADING_BITMASK) ==
-                REX_UTF8_BYTE_MOST_SIGNIFICANT_BIT ?
-                REX_UTF8_DECODE_TAIL_BYTE :
-                REX_UTF8_FAIL;
-        break;
-    case REX_UTF8_DECODE_TAIL_BYTE:
-        cp |= ((uint32_t) i_str[l] & ~REX_UTF8_TAIL_BYTE_LEADING_BITMASK) <<
-            tail_bytes * REX_UTF8_TAIL_BYTE_SIGNIFICANT_BITS;
-        state = tail_bytes ? REX_UTF8_SUCCESS : REX_UTF8_FAIL;
-        break;
-    case REX_UTF8_DECODE_ASCII:
-        cp = i_str[l];
-        l = 1;
+    case 0:
+        if (o_cp) *o_cp = b;
+        return 1;
+    case 4:
+        l *= i_str[i] >> 6 == 2;
+        cp |= (i_str[i++] & 0x3f) << 12;
         /* FALLTHROUGH */
-    case REX_UTF8_SUCCESS:
-        /* Check if output is NULL */
-        if (o_cp != NULL) *o_cp = cp;
-        return l;
+    case 3:
+        l *= i_str[i] >> 6 == 2;
+        cp |= (i_str[i++] & 0x3f) << 6;
+        /* FALLTHROUGH */
+    case 2:
+        l *= i_str[i] >> 6 == 2;
+        cp |= i_str[i++] & 0x3f;
+        break;
+    default:
+        return 0;
     }
+    if (o_cp) *o_cp = cp;
+    return l;
 }
+
 static inline size_t
 rex_parse_hex_digit(
     const char * const i_str,
