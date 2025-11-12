@@ -309,13 +309,6 @@ rex_isreserved(const uint32_t cp)
  * If reads a null terminator will return 1 and o_cp will be set to 0
  */
 
-/*TODO:
- * implement a default clz and feature test 
- */
-
-#define REX_CLZ8(i) __builtin_clz((((unsigned int)i)<< \
-    ((sizeof(unsigned int)-sizeof(uint8_t))*8)))
-
 static inline size_t
 rex_parse_utf8_codepoint(
     const unsigned char * const i_str,
@@ -325,9 +318,13 @@ rex_parse_utf8_codepoint(
     uint8_t b;
     uint8_t l, mask, shift, i;
     uint32_t cp;
+    static const uint8_t lo5[] = {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 4, 5
+    };
     if (!(i_len && i_str)) return 0;
     b = *i_str;
-    l = REX_CLZ8(~b); 
+    l = lo5[b>>3]; 
     if (l > i_len) return 0;
     cp = 0;
     mask = 0xFF >> (l + 1);
