@@ -45,7 +45,7 @@ typedef struct rex_vm_threadlist_s rex_vm_threadlist_t;
 
 struct rex_match_s
 {
-    char * const match;
+    const char * match;
     size_t match_sz;
 };
 
@@ -62,7 +62,7 @@ struct rex_vm_threadlist_s
     size_t marker_count;
 };
 
-#define REX_MARKERS(thread) ((char **) ((uint32_t*) cthread) + 1)
+#define REX_MARKERS(thread) ((const char **) ((uint32_t*) thread) + 1)
 
 void *
 rex_vm_thread_by_index(
@@ -78,7 +78,7 @@ rex_vm_thread_by_index(
 void
 rex_vm_threadlist_insert(
     rex_vm_threadlist_t *i_threadlist,
-    char ** i_markers,
+    const char ** i_markers,
     uint32_t i_pc,
     size_t i_index
 )
@@ -115,7 +115,7 @@ rex_vm_threadlist_insert(
 void
 rex_vm_threadlist_push(
     rex_vm_threadlist_t *i_threadlist,
-    char ** i_markers,
+    const char ** i_markers,
     uint32_t i_pc
 )
 {
@@ -140,17 +140,22 @@ void
 rex_vm_thread_expand(
     rex_vm_threadlist_t *i_threadlist,
     size_t i_start,
-    const rex_instruction_t * const i_prog
+    const rex_instruction_t * const i_prog,
+    const char * str_pos
+
 )
 {
     uint32_t *pc;
     uint32_t pc_tmp;
     uint32_t inst;
     rex_opcode_t op;
+    void * thread;
     size_t i;
+    uint32_t mi;
    
     for (i = i_start;i < i_threadlist->thread_count;){
-        pc = (uint32_t*) rex_vm_thread_by_index(i_threadlist, i);
+        thread = (uint32_t*) rex_vm_thread_by_index(i_threadlist, i);
+        pc = thread;
         inst = i_prog[*pc];
         op = (rex_opcode_t)REX_OP_FROM_INST(inst);
         switch (op){
@@ -164,7 +169,7 @@ rex_vm_thread_expand(
             /* Insert new thread pointing to jump*/
             rex_vm_threadlist_insert(
                 i_threadlist,
-                (char **) (pc + 1),
+                REX_MARKERS(thread),
                 REX_IMM_FROM_INST(inst),
                 i+1
             );
@@ -176,12 +181,16 @@ rex_vm_thread_expand(
             /* Insert new thread with incremented thread pc*/
             rex_vm_threadlist_insert(
                 i_threadlist,
-                (char **) (pc + 1),
+                REX_MARKERS(thread),
                 pc_tmp + 1,
                 i + 1
             );
             break;
         case REX_OPCODE_SS:
+            mi = REX_IMM_FROM_INST(inst);
+            if (mi < i_threadlist->marker_count)
+                REX_MARKERS(thread)[mi] = str_pos;
+            pc++;
             break;
         default:
             i++;
@@ -190,6 +199,12 @@ rex_vm_thread_expand(
     }
 }
 
+/* 
+ * NOTES:
+ * MARKER REGISTERS 0 and 1 are reserved for pattern match
+ * If i_matches_sz is greater than actual submatch count
+ * extra matches are undefined
+ */
 
 int
 rex_vm_exec(
@@ -199,19 +214,19 @@ rex_vm_exec(
     const rex_instruction_t * const i_prog,
     const size_t i_prog_sz,
     rex_match_t * o_matches,
-    size_t * io_matches_sz,
+    size_t i_matches_sz,
     int * o_match_found
 )
 {
     rex_vm_threadlist_t clist, nlist, tmp;
     size_t thread_sz;
-    size_t cpi, l, ti;
+    size_t cpi, l, ti, mi;
     uint32_t cp, imm, pc, inst;
     uint32_t rcp1 = 0;
     void * cthread;
     int match = 0;
-    if (!io_vm || !i_string || !i_prog || !io_matches_sz) return REX_BAD_PARAM;
-    thread_sz = *io_matches_sz * sizeof(rex_match_t) + sizeof(uint32_t);
+    if (!io_vm || !i_string || !i_prog ) return REX_BAD_PARAM;
+    thread_sz = i_matches_sz * 2 * sizeof(char *) + sizeof(uint32_t);
     if (thread_sz * i_prog_sz * 2 > io_vm->memory_sz) return REX_OUT_OF_MEMORY;
 
     REX_MEMSET(io_vm->memory, 0, io_vm->memory_sz);
@@ -219,16 +234,22 @@ rex_vm_exec(
     /* Put a thread with pc = 0 */
     clist.buffer = io_vm->memory;
     clist.thread_count = 1;
-    clist.marker_count = *io_matches_sz * 2;
+    clist.marker_count = i_matches_sz * 2;
 
     nlist.buffer = ((uint8_t*)io_vm->memory) + io_vm->memory_sz/2;
     nlist.thread_count = 0;
-    nlist.marker_count = *io_matches_sz * 2;
+    nlist.marker_count = i_matches_sz * 2;
+
+    cthread = clist.buffer;
+
+    if (clist.marker_count)
+        REX_MARKERS(cthread)[0] = i_string;
 
     rex_vm_thread_expand(
         &clist, 
         0,
-        i_prog
+        i_prog,
+        i_string
     );
     for (
         cpi = 0, l = 0;
@@ -265,7 +286,8 @@ rex_vm_exec(
                 rex_vm_thread_expand(
                     &nlist, 
                     nlist.thread_count - 1,
-                    i_prog
+                    i_prog,
+                    i_string + cpi + l
                 );
                 break;
             case REX_OPCODE_HNI:
@@ -281,7 +303,8 @@ rex_vm_exec(
                 rex_vm_thread_expand(
                     &nlist, 
                     nlist.thread_count - 1,
-                    i_prog
+                    i_prog,
+                    i_string + cpi + l
                 );
                 break;
             case REX_OPCODE_HR:
@@ -297,7 +320,8 @@ rex_vm_exec(
                 rex_vm_thread_expand(
                     &nlist, 
                     nlist.thread_count - 1,
-                    i_prog
+                    i_prog,
+                    i_string + cpi + l
                 );
                 break;
             case REX_OPCODE_AWB:
@@ -311,18 +335,23 @@ rex_vm_exec(
                 pc++;
                 goto thread_continue;
             case REX_OPCODE_SS:
-                //TODO:
-                break;
             case REX_OPCODE_B:
             case REX_OPCODE_BWP:
             case REX_OPCODE_J:
-                /* UNREACHABLE */
+                /* Handled by thread expand */
             default:
                 return REX_BAD_INSTRUCTION;
 
             case REX_OPCODE_M:
-                //TODO: Save Marker 1
                 match = 1;
+                if (2 < clist.marker_count)
+                    REX_MARKERS(cthread)[1] = i_string + cpi;
+                for (mi = 0; mi < clist.marker_count; mi+=2)
+                    o_matches[mi/2] = 
+                        (rex_match_t){
+                            REX_MARKERS(cthread)[mi],
+                            REX_MARKERS(cthread)[mi + 1] - REX_MARKERS(cthread)[mi]
+                    };
                 goto match;
             }
         }
@@ -474,7 +503,7 @@ int test_alphanumeric_single(void)
             Alphanumeric,
             12,
             NULL,
-            &matches,
+            matches,
             &match
         );
         ret = !match || err  ? 1 : ret;
@@ -483,6 +512,48 @@ int test_alphanumeric_single(void)
     printf(
         "\\w+ MATCHES EVERY ALPHANUMERIC SINGLE: %s",  
         match && !err ? "PASS" : "FAIL"
+    );
+    if (err)
+    {
+        printf(" WITH ERROR: %d\n",err); 
+    }else{
+        putchar('\n');
+    }
+
+    return  ret;
+}
+int test_alphanumeric_single_match_extraction(void)
+{
+    size_t i,  matches;
+    matches = 1;
+    int match, err;
+    int ret = 0;
+    uint8_t buffer[1024];
+    rex_vm_t  vm;
+    rex_match_t extract;
+    
+    vm.memory = buffer;
+    vm.memory_sz = 1024;
+    for (i = 0; i < 63; i++)
+    {
+        err = rex_vm_exec(
+            &vm,
+            Alphanumeric_pass[i],
+            1,
+            Alphanumeric,
+            12,
+            &extract,
+            matches,
+            &match
+        );
+        ret |= !match || err;
+        ret |= extract.match != Alphanumeric_pass[i];
+        ret |= extract.match_sz != 1;
+        if (ret) break;
+    }
+    printf(
+        "\\w+ WITH MATCH EXTRACTION: %s",  
+        !ret ? "PASS" : "FAIL"
     );
     if (err)
     {
@@ -523,7 +594,7 @@ test_alphanumeric_random_sequence(void)
             Alphanumeric,
             12,
             NULL,
-            &matches,
+            matches,
             &match
         );
         ret = !match || err  ? 1 : ret;
@@ -562,7 +633,7 @@ int test_nonalphanumeric(void)
             Alphanumeric,
             12,
             NULL,
-            &matches,
+            matches,
             &match
         );
         ret = match || err  ? 1 : ret;
@@ -875,10 +946,10 @@ int test_misc_symbol_single(void)
             unicode_misc_symbols,
             6,
             NULL,
-            &matches,
+            matches,
             &match
         );
-        ret = !match || err  ? 1 : ret;
+        ret = (!match || err) ? 1 : ret;
         if (ret) break;
     }
     printf(
@@ -926,7 +997,7 @@ test_misc_symbol_random_sequence(void)
             unicode_misc_symbols,
             6,
             NULL,
-            &matches,
+            matches,
             &match
         );
         ret = !match || err  ? 1 : ret;
@@ -965,7 +1036,7 @@ int test_not_misc_symbol(void)
             Alphanumeric,
             12,
             NULL,
-            &matches,
+            matches,
             &match
         );
         ret = match || err  ? 1 : ret;
@@ -985,16 +1056,146 @@ int test_not_misc_symbol(void)
     return  ret;
 }
 
+int test_insufficient_size_errors(void)
+{
+    size_t  matches;
+    matches = 0;
+    int match, err;
+    uint8_t buffer[128];
+    rex_vm_t  vm;
+    
+    vm.memory = buffer;
+    vm.memory_sz = 1;
+    err = rex_vm_exec(
+        &vm,
+        Misc_symbol_pass[1],
+        SIZE_MAX,
+        unicode_misc_symbols,
+        6,
+        NULL,
+        matches,
+        &match
+    );
+    printf(
+        "INSUFFICIENT BUFFER THROWS REX_OUT_OF_MEMORY : %s",  
+        err == REX_OUT_OF_MEMORY ? "PASS" : "FAIL"
+    );
+    putchar('\n');
+
+    return  err != REX_OUT_OF_MEMORY;
+}
+
+int test_illegal_instruction(void)
+{
+    size_t  matches;
+    matches = 0;
+    int match, err;
+    uint8_t buffer[128];
+    rex_vm_t  vm;
+    rex_instruction_t prog[] = {
+        0xB3FFFFFF,
+        0xA5FFFFFF
+    };
+    
+    vm.memory = buffer;
+    vm.memory_sz = 128;
+    err = rex_vm_exec(
+        &vm,
+        "abc",
+        SIZE_MAX,
+        prog,
+        2,
+        NULL,
+        matches,
+        &match
+    );
+    printf(
+        "ILLEGAL INSTRUCTION THROWS REX_BAD_INSTRUCTION : %s",  
+        err == REX_BAD_INSTRUCTION ? "PASS" : "FAIL"
+    );
+    putchar('\n');
+
+    return  err != REX_BAD_INSTRUCTION;
+}
+
+int test_bad_params(void)
+{
+    size_t  matches;
+    matches = 0;
+    int match, err;
+    int ret = 0;
+    uint8_t buffer[128];
+    rex_vm_t  vm;
+    rex_instruction_t prog[] = {
+        0xB3FFFFFF,
+        0xA5FFFFFF
+    };
+    
+    vm.memory = buffer;
+    vm.memory_sz = 128;
+
+    /* NULL VM */
+    err = rex_vm_exec(
+        NULL,
+        "abc",
+        SIZE_MAX,
+        prog,
+        2,
+        NULL,
+        matches,
+        &match
+    );
+    ret = err != REX_BAD_PARAM ? 1 : ret;
+
+    /* NULL Search String */
+    err = rex_vm_exec(
+        &vm,
+        NULL,
+        SIZE_MAX,
+        prog,
+        2,
+        NULL,
+        matches,
+        &match
+    );
+    ret = err != REX_BAD_PARAM ? 1 : ret;
+
+    /* NULL Program */
+    err = rex_vm_exec(
+        &vm,
+        "abc",
+        SIZE_MAX,
+        NULL,
+        2,
+        NULL,
+        matches,
+        &match
+    );
+    ret = err != REX_BAD_PARAM ? 1 : ret;
+
+    printf(
+        "NULL PARAMS THROWS REX_BAD_PARAM : %s",  
+        !ret ? "PASS" : "FAIL"
+    );
+    putchar('\n');
+
+    return ret;
+}
+
 
 int main(void)
 {
     int ret = 0;
     ret |= test_alphanumeric_single();
+    ret |= test_alphanumeric_single_match_extraction();
     ret |= test_alphanumeric_random_sequence();
     ret |= test_nonalphanumeric();
     ret |= test_misc_symbol_single();
     ret |= test_misc_symbol_random_sequence();
     ret |= test_not_misc_symbol();
+    ret |= test_insufficient_size_errors();
+    ret |= test_illegal_instruction();
+    ret |= test_bad_params();
     if (ret) goto exit;
 
 exit:
