@@ -186,6 +186,13 @@ rex_vm_thread_expand(
                 i + 1
             );
             break;
+        /* TODO:
+         * REFACTOR: Reconcile the handling on anchors with this 
+         * Move SS to vm func or move anchors here 
+         * or decide this is fine
+         * Anchors are failable unlike everything here
+         * also require start and stop information
+         * and string length*/
         case REX_OPCODE_SS:
             mi = REX_IMM_FROM_INST(inst);
             if (mi < i_threadlist->marker_count)
@@ -328,10 +335,29 @@ rex_vm_exec(
                 break;
             case REX_OPCODE_AWB:
             case REX_OPCODE_ANWB:
-            case REX_OPCODE_AE:
-            case REX_OPCODE_AS:
-                //TODO: Assert
                 break;
+            case REX_OPCODE_AE:
+                if (i_string_sz - cpi != 0)
+                    if (i_string[cpi] != 0)
+                        break;
+                pc = ++*(uint32_t *)cthread;
+                rex_vm_thread_expand(
+                    &clist, 
+                    ti,
+                    i_prog,
+                    i_string + cpi + l
+                );
+                goto thread_continue;
+            case REX_OPCODE_AS:
+                if (cpi != 0) break;
+                pc = ++*(uint32_t *)cthread;
+                rex_vm_thread_expand(
+                    &clist, 
+                    ti,
+                    i_prog,
+                    i_string + cpi + l
+                );
+                goto thread_continue;
             case REX_OPCODE_LR:
                 rcp1 = imm;
                 pc++;
@@ -1213,6 +1239,7 @@ const uint32_t Alphanumeric_With_Submatches[26] ={
     REX_INSTRUCTION(REX_OPCODE_SS, 5), 
     REX_INSTRUCTION(REX_OPCODE_M, 0)
 };
+
 int
 test_alphanumeric_random_sequence_with_submatches(void)
 {
@@ -1269,6 +1296,137 @@ test_alphanumeric_random_sequence_with_submatches(void)
     return ret;
 }
 
+
+const uint32_t start_end_assertion[4] ={
+    REX_INSTRUCTION(REX_OPCODE_AS, 0), 
+    REX_INSTRUCTION(REX_OPCODE_HNIA, 'A'), 
+    REX_INSTRUCTION(REX_OPCODE_AE, 0), 
+    REX_INSTRUCTION(REX_OPCODE_M, 0) 
+};
+const uint32_t start_assertion_impossible[4] ={
+    REX_INSTRUCTION(REX_OPCODE_HNIA, 'A'), 
+    REX_INSTRUCTION(REX_OPCODE_AS, 0), 
+    REX_INSTRUCTION(REX_OPCODE_HNIA, 'A'), 
+    REX_INSTRUCTION(REX_OPCODE_M, 0) 
+};
+
+
+int
+test_start_end_assertions(void)
+{
+    size_t matches;
+    matches = 0;
+    int match, err;
+    int ret = 0;
+    uint8_t buffer[1024];
+    rex_vm_t  vm;
+
+
+    vm.memory = buffer;
+    vm.memory_sz = 1023;
+    /* Should Match */
+    err = rex_vm_exec(
+            &vm,
+            "A",
+            TEST_STR_SZ,
+            start_end_assertion,
+            4,
+            NULL,
+            matches,
+            &match
+    );
+    ret |= !match || err;
+
+    /* Should Match */
+    err = rex_vm_exec(
+            &vm,
+            "AB",
+            1,
+            start_end_assertion,
+            4,
+            NULL,
+            matches,
+            &match
+    );
+    ret |= !match || err;
+
+    /* Should Not Match */
+    err = rex_vm_exec(
+            &vm,
+            "AB",
+            TEST_STR_SZ,
+            start_end_assertion,
+            4,
+            NULL,
+            matches,
+            &match
+    );
+    ret |= match || err;
+
+    /* Should Not Match */
+    err = rex_vm_exec(
+            &vm,
+            "BA",
+            TEST_STR_SZ,
+            start_end_assertion,
+            4,
+            NULL,
+            matches,
+            &match
+    );
+    ret |= match || err;
+
+    /* Should Not Match */
+    err = rex_vm_exec(
+            &vm,
+            "AA",
+            TEST_STR_SZ,
+            start_assertion_impossible,
+            4,
+            NULL,
+            matches,
+            &match
+    );
+    ret |= match || err;
+
+    /* Should Not Match */
+    err = rex_vm_exec(
+            &vm,
+            "A",
+            TEST_STR_SZ,
+            start_assertion_impossible,
+            4,
+            NULL,
+            matches,
+            &match
+    );
+    ret |= match || err;
+
+    /* Should Not Match */
+    err = rex_vm_exec(
+            &vm,
+            "A",
+            1,
+            start_assertion_impossible,
+            4,
+            NULL,
+            matches,
+            &match
+    );
+    ret |= match || err;
+
+    printf(
+        "START AND END ANCHOR ASSERTIONS: %s",
+        !ret ? "PASS" : "FAIL"
+    );
+    if (err)
+    {
+        printf(" WITH ERROR: %d\n",err); 
+    }else{
+        putchar('\n');
+    }
+    return ret;
+}
 int main(void)
 {
     int ret = 0;
@@ -1283,6 +1441,7 @@ int main(void)
     ret |= test_illegal_instruction();
     ret |= test_bad_params();
     ret |= test_alphanumeric_random_sequence_with_submatches();
+    ret |= test_start_end_assertions();
     if (ret) goto exit;
 
 exit:
