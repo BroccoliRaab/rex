@@ -62,7 +62,7 @@ struct rex_vm_threadlist_s
     size_t marker_count;
 };
 
-#define REX_MARKERS(thread) ((const char **) ((uint32_t*) thread) + 1)
+#define REX_MARKERS(thread) ((const char **) (((uint32_t*) thread) + 1))
 
 void *
 rex_vm_thread_by_index(
@@ -190,7 +190,7 @@ rex_vm_thread_expand(
             mi = REX_IMM_FROM_INST(inst);
             if (mi < i_threadlist->marker_count)
                 REX_MARKERS(thread)[mi] = str_pos;
-            pc++;
+            pc[0]++;
             break;
         default:
             i++;
@@ -253,10 +253,12 @@ rex_vm_exec(
     );
     for (
         cpi = 0, l = 0;
-        (l = rex_parse_utf8_codepoint(i_string + cpi, i_prog_sz - cpi, &cp));
+        ;
         cpi += l
         )
     {
+        l = rex_parse_utf8_codepoint(i_string + cpi, i_string_sz - cpi, &cp);
+        if (l == 0 && i_string_sz - cpi != 0) break;
         if (clist.thread_count == 0) break;
 
         for(ti = 0; ti < clist.thread_count; ti++)
@@ -344,7 +346,7 @@ rex_vm_exec(
 
             case REX_OPCODE_M:
                 match = 1;
-                if (2 < clist.marker_count)
+                if (clist.marker_count > 1)
                     REX_MARKERS(cthread)[1] = i_string + cpi;
                 for (mi = 0; mi < clist.marker_count; mi+=2)
                     o_matches[mi/2] = 
@@ -360,7 +362,7 @@ rex_vm_exec(
         clist = nlist;
         nlist = tmp;
         nlist.thread_count = 0;
-        if (cp == 0) break;
+        if (cp == 0 || l == 0) break;
     }
     if (o_match_found) *o_match_found = match;
 
@@ -564,6 +566,7 @@ int test_alphanumeric_single_match_extraction(void)
 
     return  ret;
 }
+
 int
 test_alphanumeric_random_sequence(void)
 {
@@ -1182,6 +1185,89 @@ int test_bad_params(void)
     return ret;
 }
 
+const uint32_t Alphanumeric_With_Submatches[26] ={
+    REX_INSTRUCTION(REX_OPCODE_SS, 2), 
+    REX_INSTRUCTION(REX_OPCODE_LR, '0'-1), 
+    REX_INSTRUCTION(REX_OPCODE_HR, 0), 
+    REX_INSTRUCTION(REX_OPCODE_LR, 'A'-1), 
+    REX_INSTRUCTION(REX_OPCODE_HR, '9'+1), 
+    REX_INSTRUCTION(REX_OPCODE_LR, '_'-1), 
+    REX_INSTRUCTION(REX_OPCODE_HR, 'Z'+1), 
+    REX_INSTRUCTION(REX_OPCODE_LR, 'a'-1), 
+    REX_INSTRUCTION(REX_OPCODE_HR, '_'+1), 
+    REX_INSTRUCTION(REX_OPCODE_LR, REX_MAX_UNICODE_VAL), 
+    REX_INSTRUCTION(REX_OPCODE_HRA, 'z'+1), 
+    REX_INSTRUCTION(REX_OPCODE_BWP, 1),
+    REX_INSTRUCTION(REX_OPCODE_SS, 3), 
+    REX_INSTRUCTION(REX_OPCODE_SS, 4), 
+    REX_INSTRUCTION(REX_OPCODE_LR, '0'-1), 
+    REX_INSTRUCTION(REX_OPCODE_HR, 0), 
+    REX_INSTRUCTION(REX_OPCODE_LR, 'A'-1), 
+    REX_INSTRUCTION(REX_OPCODE_HR, '9'+1), 
+    REX_INSTRUCTION(REX_OPCODE_LR, '_'-1), 
+    REX_INSTRUCTION(REX_OPCODE_HR, 'Z'+1), 
+    REX_INSTRUCTION(REX_OPCODE_LR, 'a'-1), 
+    REX_INSTRUCTION(REX_OPCODE_HR, '_'+1), 
+    REX_INSTRUCTION(REX_OPCODE_LR, REX_MAX_UNICODE_VAL), 
+    REX_INSTRUCTION(REX_OPCODE_HRA, 'z'+1), 
+    REX_INSTRUCTION(REX_OPCODE_SS, 5), 
+    REX_INSTRUCTION(REX_OPCODE_M, 0)
+};
+int
+test_alphanumeric_random_sequence_with_submatches(void)
+{
+    size_t i, j, matches;
+    matches = 3;
+    int match, err;
+    int ret = 0;
+    int ri;
+    uint8_t buffer[4096];
+    rex_vm_t  vm;
+    char test_str[TEST_STR_SZ] = {0};
+    rex_match_t extract[3];
+
+    vm.memory = buffer;
+    vm.memory_sz = 4096;
+
+    for ( i = 0; i < 1024; i++){
+        for ( j = 0; j < TEST_STR_SZ-1; j++)
+        {
+            ri = (uint32_t) rand();
+            ri %= 63;
+            test_str[j] = Alphanumeric_pass[ri][0];
+        }
+        err = rex_vm_exec(
+            &vm,
+            test_str,
+            TEST_STR_SZ,
+            Alphanumeric_With_Submatches,
+            26,
+            extract,
+            matches,
+            &match
+        );
+        ret |= !match || err;
+        ret |= extract[0].match != test_str;
+        ret |= extract[0].match_sz != TEST_STR_SZ-1;
+        ret |= extract[1].match != test_str;
+        ret |= extract[1].match_sz != TEST_STR_SZ-2;
+        ret |= extract[2].match != test_str+TEST_STR_SZ-2;
+        ret |= extract[2].match_sz != 1;
+        if (ret) break;
+    }
+    printf(
+        "(\\w+)(\\w) "
+        "MATCHES RANDOM ALPHANUMERIC STRINGS WITH SUBMATCH EXTRACTION: %s",
+        !ret ? "PASS" : "FAIL"
+    );
+    if (err)
+    {
+        printf(" WITH ERROR: %d\n",err); 
+    }else{
+        putchar('\n');
+    }
+    return ret;
+}
 
 int main(void)
 {
@@ -1196,6 +1282,7 @@ int main(void)
     ret |= test_insufficient_size_errors();
     ret |= test_illegal_instruction();
     ret |= test_bad_params();
+    ret |= test_alphanumeric_random_sequence_with_submatches();
     if (ret) goto exit;
 
 exit:
