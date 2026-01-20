@@ -295,7 +295,7 @@ typedef enum rex_opcode_e
  * isdigit
  */
 
-/*
+/* TODO: 
  * printable? 
     Not sure if useful. 
     Would also complicate the LUT logic by disallowing shortcut to NULL.
@@ -313,13 +313,13 @@ static const uint8_t rex_ascii_class[128] =
     0x2, 0x2, 0x2, 0x2, 0x2, 0x2, 0x2, 0x2, 0x2, 0x2, 0x2, 0x2, 0x2, 0x2, 0x2,
     0x2, 0x1, 0x1, 0x1, 0x0, 0x2, 0x0, 0x2, 0x2, 0x2, 0x2, 0x2, 0x2, 0x2, 0x2,
     0x2, 0x2, 0x2, 0x2, 0x2, 0x2, 0x2, 0x2, 0x2, 0x2, 0x2, 0x2, 0x2, 0x2, 0x2,
-    0x2, 0x2, 0x2, 0x1, 0x1, 0x1, 0x0,
+    0x2, 0x2, 0x2, 0x1, 0x1, 0x1, 0x0, 0x0,
 };
 
 #define REX_ASCII_CLASS_RESERVED_MASK   (0x1)
 #define REX_ASCII_CLASS_WORD_MASK       (0x2)
 #define REX_ASCII_CLASS_DIGIT_MASK      (0x4)
-#define REX_ASCII_CLASS_NORM(x) (((uint32_t) x) > 127 ? 0 : x)
+#define REX_ASCII_CLASS_NORM(x) (((uint32_t) x) > 127 ? 0 : (uint32_t) x)
 
 #define REX_ISRESERVED(x) \
     (rex_ascii_class[REX_ASCII_CLASS_NORM(x)] & REX_ASCII_CLASS_RESERVED_MASK)
@@ -1405,3 +1405,411 @@ rex_ast_compile(
     }
     
 }
+
+
+/* REX VIRTUAL MACHINE */
+typedef struct rex_match_s rex_match_t;
+typedef struct rex_vm_s rex_vm_t;
+typedef struct rex_vm_threadlist_s rex_vm_threadlist_t;
+
+/* Thread Memory Layout
+ *
+ * uint32_t : pc
+ * const char *[N*2] : match markers
+ *
+ */
+
+/* IDEA:
+ * Instructions that do not advance the character pointer and do not jump
+ * can short circuit the loop and just advance to the next instruction.
+ * Then the number of threads needed are only the number of threads that jump or advance.
+ *
+ * ^ may even be able to short circuit jumps.
+ *
+ * To reel this in a little bit
+ * Have Multipart instructions:
+ *
+ * Any HALT without advance 
+ * Load range
+ *
+ *
+ * ASSERTS??
+ */
+
+struct rex_match_s
+{
+    const char * match;
+    size_t match_sz;
+};
+
+struct rex_vm_s
+{
+    void * memory;
+    size_t memory_sz;
+};
+
+struct rex_vm_threadlist_s
+{
+    void * buffer;
+    size_t thread_count;
+    size_t marker_count;
+};
+
+#define REX_MARKERS(thread) ((const char **) (((uint32_t*) thread) + 1))
+
+void *
+rex_vm_thread_by_index(
+    const rex_vm_threadlist_t * const i_threadlist,
+    const size_t i_thread_index
+){
+    uint8_t * const byte_buffer = i_threadlist->buffer;
+    return byte_buffer +  i_thread_index *
+        (sizeof(uint32_t) + sizeof(char*) * i_threadlist->marker_count);
+}
+
+/* NO BOUNDS CHECKING!!! */
+void
+rex_vm_threadlist_insert(
+    rex_vm_threadlist_t *i_threadlist,
+    const char ** i_markers,
+    uint32_t i_pc,
+    size_t i_index
+)
+{
+    size_t i;
+    uint32_t *pc;
+    uint8_t * thread;
+    char ** o_markers;
+    size_t thread_sz = 
+        sizeof(uint32_t) + sizeof(char *) * i_threadlist->marker_count;
+    for (i = 0; i<i_index; i++)
+    {
+        pc = rex_vm_thread_by_index(i_threadlist, i);
+        if (*pc  == i_pc) return;
+    }
+    pc = rex_vm_thread_by_index(i_threadlist, i);
+    thread = (uint8_t *) pc;
+    memmove(
+            thread + thread_sz,
+            thread,
+            (i_threadlist->thread_count - i) * thread_sz
+           );
+    *pc = i_pc;
+    pc++;
+    o_markers = (char **) pc;
+    memcpy(
+            o_markers,
+            i_markers,
+            sizeof(char *) * i_threadlist->marker_count
+          );
+    i_threadlist->thread_count++;
+}
+
+void
+rex_vm_threadlist_push(
+    rex_vm_threadlist_t *i_threadlist,
+    const char ** i_markers,
+    uint32_t i_pc
+)
+{
+    size_t i;
+    uint32_t *pc;
+    for (i = 0; i<i_threadlist->thread_count; i++)
+    {
+        pc = rex_vm_thread_by_index(i_threadlist, i);
+        if (*pc  == i_pc) return;
+    }
+    pc = rex_vm_thread_by_index(i_threadlist, i);
+    *pc = i_pc;
+    memcpy(
+        pc+1,
+        i_markers,
+        sizeof(char *) * i_threadlist->marker_count
+    );
+    i_threadlist->thread_count++;
+}
+
+void
+rex_vm_thread_expand(
+    rex_vm_threadlist_t *i_threadlist,
+    size_t i_start,
+    const rex_instruction_t * const i_prog,
+    const char * str_pos
+
+)
+{
+    uint32_t *pc;
+    uint32_t pc_tmp;
+    uint32_t inst;
+    rex_opcode_t op;
+    void * thread;
+    size_t i;
+    uint32_t mi;
+   
+    for (i = i_start;i < i_threadlist->thread_count;){
+        thread = (uint32_t*) rex_vm_thread_by_index(i_threadlist, i);
+        pc = thread;
+        inst = i_prog[*pc];
+        op = (rex_opcode_t)REX_OP_FROM_INST(inst);
+        switch (op){
+        case REX_OPCODE_J:
+            *pc = REX_IMM_FROM_INST(inst);
+            break;
+        case REX_OPCODE_B:
+            pc_tmp = *pc;
+            /* Inc pc for first thread*/
+            pc[0]++;
+            /* Insert new thread pointing to jump*/
+            rex_vm_threadlist_insert(
+                i_threadlist,
+                REX_MARKERS(thread),
+                REX_IMM_FROM_INST(inst),
+                i+1
+            );
+            break;
+        case REX_OPCODE_BWP:
+            pc_tmp = *pc;
+            /* set first thread pc to jump*/
+            *pc = REX_IMM_FROM_INST(inst);
+            /* Insert new thread with incremented thread pc*/
+            rex_vm_threadlist_insert(
+                i_threadlist,
+                REX_MARKERS(thread),
+                pc_tmp + 1,
+                i + 1
+            );
+            break;
+        /* TODO:
+         * REFACTOR: Reconcile the handling on anchors with this 
+         * Move SS to vm func or move anchors here 
+         * or decide this is fine
+         * Anchors are failable unlike everything here
+         * also require start and stop information
+         * and string length*/
+        case REX_OPCODE_SS:
+            mi = REX_IMM_FROM_INST(inst);
+            if (mi < i_threadlist->marker_count)
+                REX_MARKERS(thread)[mi] = str_pos;
+            pc[0]++;
+            break;
+        default:
+            i++;
+            break;
+        }
+    }
+}
+
+/* 
+ * NOTES:
+ * MARKER REGISTERS 0 and 1 are reserved for pattern match
+ * If i_matches_sz is greater than actual submatch count
+ * extra matches are undefined
+ */
+
+int
+rex_vm_exec(
+    rex_vm_t * io_vm,
+    const char * const i_string,
+    const size_t i_string_sz,
+    const size_t i_string_start,
+    const rex_instruction_t * const i_prog,
+    const size_t i_prog_sz,
+    rex_match_t * o_matches,
+    size_t i_matches_sz,
+    int * o_match_found
+)
+{
+    rex_vm_threadlist_t clist, nlist, tmp;
+    size_t thread_sz;
+    size_t cpi, l, ti, mi;
+    uint32_t cp, imm, pc, inst;
+    uint32_t rcp1 = 0;
+    uint8_t prev_word = 0;
+    void * cthread;
+    int match = 0;
+    if (!io_vm || !i_string || !i_prog ) return REX_BAD_PARAM;
+    thread_sz = i_matches_sz * 2 * sizeof(char *) + sizeof(uint32_t);
+    if (thread_sz * i_prog_sz * 2 > io_vm->memory_sz) return REX_OUT_OF_MEMORY;
+
+    cpi = i_string_start;
+
+    REX_MEMSET(io_vm->memory, 0, io_vm->memory_sz);
+
+    /* Put a thread with pc = 0 */
+    clist.buffer = io_vm->memory;
+    clist.thread_count = 1;
+    clist.marker_count = i_matches_sz * 2;
+
+    nlist.buffer = ((uint8_t*)io_vm->memory) + io_vm->memory_sz/2;
+    nlist.thread_count = 0;
+    nlist.marker_count = i_matches_sz * 2;
+
+    cthread = clist.buffer;
+
+    if (clist.marker_count)
+        REX_MARKERS(cthread)[0] = i_string;
+
+    rex_vm_thread_expand(
+        &clist, 
+        0,
+        i_prog,
+        i_string
+    );
+    for (
+        cpi = 0, l = 0;
+        ;
+        cpi += l
+        )
+    {
+        l = rex_parse_utf8_codepoint(i_string + cpi, i_string_sz - cpi, &cp);
+        if (l == 0 && i_string_sz - cpi != 0) break;
+        if (clist.thread_count == 0) break;
+
+        for(ti = 0; ti < clist.thread_count; ti++)
+        {
+            cthread = rex_vm_thread_by_index(&clist, ti);
+            pc = *(uint32_t*) cthread;
+
+        /* Some instruction sequences are handled
+         * as if they were a single instruction
+         */
+        thread_continue:
+            inst = i_prog[pc];
+
+            imm = REX_IMM_FROM_INST(inst);
+            switch ((rex_opcode_t)REX_OP_FROM_INST(inst))
+            {
+            case REX_OPCODE_HI:
+                if (cp == imm) break;
+                pc++;
+                goto thread_continue;
+            case REX_OPCODE_HIA:
+                if (cp == imm) break;
+                rex_vm_threadlist_push(
+                    &nlist, 
+                    REX_MARKERS(cthread),
+                    pc + 1); 
+                rex_vm_thread_expand(
+                    &nlist, 
+                    nlist.thread_count - 1,
+                    i_prog,
+                    i_string + cpi + l
+                );
+                break;
+            case REX_OPCODE_HNI:
+                if (cp != imm) break;
+                pc++;
+                goto thread_continue;
+            case REX_OPCODE_HNIA:
+                if (cp != imm) break;
+                rex_vm_threadlist_push(
+                    &nlist, 
+                    REX_MARKERS(cthread),
+                    pc + 1); 
+                rex_vm_thread_expand(
+                    &nlist, 
+                    nlist.thread_count - 1,
+                    i_prog,
+                    i_string + cpi + l
+                );
+                break;
+            case REX_OPCODE_HR:
+                if (cp >= imm && cp <= rcp1) break;
+                pc++;
+                goto thread_continue;
+            case REX_OPCODE_HRA:
+                if (cp >= imm && cp <= rcp1) break;
+                rex_vm_threadlist_push(
+                    &nlist, 
+                    REX_MARKERS(cthread),
+                    pc + 1); 
+                rex_vm_thread_expand(
+                    &nlist, 
+                    nlist.thread_count - 1,
+                    i_prog,
+                    i_string + cpi + l
+                );
+                break;
+            case REX_OPCODE_AWB:
+                if (prev_word != REX_ISWORD(cp)) break;
+                pc = ++*(uint32_t *)cthread;
+                rex_vm_thread_expand(
+                    &clist, 
+                    ti,
+                    i_prog,
+                    i_string + cpi + l
+                );
+                goto thread_continue;
+            case REX_OPCODE_ANWB:
+                if (prev_word == REX_ISWORD(cp)) break;
+                pc = ++*(uint32_t *)cthread;
+                rex_vm_thread_expand(
+                    &clist, 
+                    ti,
+                    i_prog,
+                    i_string + cpi + l
+                );
+                goto thread_continue;
+            case REX_OPCODE_AE:
+                if (i_string_sz - cpi != 0)
+                    if (i_string[cpi] != 0)
+                        break;
+                pc = ++*(uint32_t *)cthread;
+                rex_vm_thread_expand(
+                    &clist, 
+                    ti,
+                    i_prog,
+                    i_string + cpi + l
+                );
+                goto thread_continue;
+            case REX_OPCODE_AS:
+                if (cpi != 0) break;
+                pc = ++*(uint32_t *)cthread;
+                rex_vm_thread_expand(
+                    &clist, 
+                    ti,
+                    i_prog,
+                    i_string + cpi + l
+                );
+                goto thread_continue;
+            case REX_OPCODE_LR:
+                rcp1 = imm;
+                pc++;
+                goto thread_continue;
+            case REX_OPCODE_SS:
+            case REX_OPCODE_B:
+            case REX_OPCODE_BWP:
+            case REX_OPCODE_J:
+                /* Handled by thread expand */
+            default:
+                return REX_BAD_INSTRUCTION;
+
+            case REX_OPCODE_M:
+                match = 1;
+                if (clist.marker_count > 1)
+                    REX_MARKERS(cthread)[1] = i_string + cpi;
+                for (mi = 0; mi < clist.marker_count; mi+=2)
+                    o_matches[mi/2] = 
+                        (rex_match_t){
+                            REX_MARKERS(cthread)[mi],
+                            REX_MARKERS(cthread)[mi + 1] - REX_MARKERS(cthread)[mi]
+                    };
+                goto match;
+            }
+        }
+    /* Loop iteration. Match instruction shortcuts here*/
+    match:
+        tmp = clist;
+        clist = nlist;
+        nlist = tmp;
+        nlist.thread_count = 0;
+        prev_word = REX_ISWORD(cp);
+        if (cp == 0 || l == 0) break;
+    }
+    if (o_match_found) *o_match_found = match;
+
+    return 0;
+}
+
+
+
