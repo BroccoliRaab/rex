@@ -1297,12 +1297,15 @@ test_alphanumeric_random_sequence_with_submatches(void)
 }
 
 
+/* $A^ */
 const uint32_t start_end_assertion[4] ={
     REX_INSTRUCTION(REX_OPCODE_AS, 0), 
     REX_INSTRUCTION(REX_OPCODE_HNIA, 'A'), 
     REX_INSTRUCTION(REX_OPCODE_AE, 0), 
     REX_INSTRUCTION(REX_OPCODE_M, 0) 
 };
+
+/* A$A */
 const uint32_t start_assertion_impossible[4] ={
     REX_INSTRUCTION(REX_OPCODE_HNIA, 'A'), 
     REX_INSTRUCTION(REX_OPCODE_AS, 0), 
