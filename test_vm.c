@@ -9,16 +9,6 @@ typedef struct rex_match_s rex_match_t;
 typedef struct rex_vm_s rex_vm_t;
 typedef struct rex_vm_threadlist_s rex_vm_threadlist_t;
 
-/* TODO:
- * Save the match as submatch 0?
- * Makes the in vm search approach simpler by just inserting regex into .*?(regex)
- * 5x minimal thread size. 4 Bytes -> 20 Bytes
- *
- * Ideally want the minimal thread size and in vm search
- * Could do specific match start save instruction
- *
- */
-
 /* Thread Memory Layout
  *
  * uint32_t : pc
