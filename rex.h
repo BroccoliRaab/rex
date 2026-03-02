@@ -1624,7 +1624,7 @@ rex_vm_exec(
     size_t cpi, l, ti, mi;
     uint32_t cp, imm, pc, inst;
     uint32_t rcp1 = 0;
-    uint8_t prev_word = 0;
+    uint8_t prev_word;
     void * cthread;
     int match = 0;
     if (!io_vm || !i_string || !i_prog ) return REX_BAD_PARAM;
@@ -1632,6 +1632,9 @@ rex_vm_exec(
     if (thread_sz * i_prog_sz * 2 > io_vm->memory_sz) return REX_OUT_OF_MEMORY;
 
     cpi = i_string_start;
+
+    /* Can look back one byte as any valid unicode byte will return false */
+    prev_word = cpi == 0 ? 0 : REX_ISWORD(i_string[cpi - 1]);
 
     REX_MEMSET(io_vm->memory, 0, io_vm->memory_sz);
 
@@ -1647,16 +1650,16 @@ rex_vm_exec(
     cthread = clist.buffer;
 
     if (clist.marker_count)
-        REX_MARKERS(cthread)[0] = i_string;
+        REX_MARKERS(cthread)[0] = i_string + cpi;
 
     rex_vm_thread_expand(
         &clist, 
         0,
         i_prog,
-        i_string
+        i_string + cpi
     );
     for (
-        cpi = 0, l = 0;
+        l = 0;
         ;
         cpi += l
         )

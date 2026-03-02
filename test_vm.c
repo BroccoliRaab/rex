@@ -8,12 +8,14 @@
 /* TODO:
  * WORD BOUNDARY TESTS
  * Out of place instructions throw illegal instruction
+ * Clear match extractions
  */
 
 /*TESTS*/
 
 /* Compiled code for \w+
  * Alphanumeric Sequence
+ * Clear submatches on failure?
  */
 const uint32_t Alphanumeric[12] ={
     REX_INSTRUCTION(REX_OPCODE_LR, '0'-1), 
@@ -206,6 +208,58 @@ int test_alphanumeric_single_match_extraction(void)
     }
 
     return  ret;
+}
+
+int
+test_alphanumeric_random_sequence_offset(void)
+{
+    size_t i, j, matches;
+    int match, err;
+    int ret = 0;
+    int ri;
+    uint8_t buffer[512];
+    rex_vm_t  vm;
+    char test_str[TEST_STR_SZ] = {0};
+    rex_match_t extract;  
+    matches = 1;
+
+    vm.memory = buffer;
+    vm.memory_sz = 512;
+
+    for ( i = 0; i < 1024; i++){
+        for ( j = 0; j < TEST_STR_SZ-1; j++)
+        {
+            ri = (uint32_t) rand() + 1;
+            ri %= 63;
+            test_str[j] = Alphanumeric_pass[ri][0];
+        }
+        test_str[(((uint32_t) rand()) % (TEST_STR_SZ-1))+1] = 0; 
+        err = rex_vm_exec(
+            &vm,
+            test_str,
+            TEST_STR_SZ,
+            1,
+            Alphanumeric,
+            12,
+            &extract,
+            matches,
+            &match
+        );
+        ret = !match || err  ? 1 : ret;
+        ret |= !(extract.match == test_str+1 && extract.match_sz == ri - 1); 
+        if (ret) break;
+    }
+    printf(
+        "\\w+ MATCHES RANDOM ALPHANUMERIC STRINGS WITH OFFSET: %s",  
+        match && !err ? "PASS" : "FAIL"
+    );
+    if (err)
+    {
+        printf(" WITH ERROR: %d\n",err); 
+    }else{
+        putchar('\n');
+    }
+    return ret;
 }
 
 int
@@ -1065,12 +1119,14 @@ test_start_end_assertions(void)
 }
 
 
+
 int main(void)
 {
     int ret = 0;
     ret |= test_alphanumeric_single();
     ret |= test_alphanumeric_single_match_extraction();
     ret |= test_alphanumeric_random_sequence();
+    ret |= test_alphanumeric_random_sequence_offset();
     ret |= test_nonalphanumeric();
     ret |= test_misc_symbol_single();
     ret |= test_misc_symbol_random_sequence();
