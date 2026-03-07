@@ -1,9 +1,15 @@
 #define REX_IMPLEMENTATION
 #include "rex.h"
 
+#ifdef __OpenBSD__
+#define REX_TEST_SRAND srand_deterministic
+#else
+#define REX_TEST_SRAND srand
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 
 /* TODO:
  * WORD BOUNDARY TESTS
@@ -155,7 +161,7 @@ int test_alphanumeric_single(void)
     }
     printf(
         "\\w+ MATCHES EVERY ALPHANUMERIC SINGLE: %s",  
-        match && !err ? "PASS" : "FAIL"
+        !ret ? "PASS" : "FAIL"
     );
     if (err)
     {
@@ -221,6 +227,7 @@ test_alphanumeric_random_sequence_offset(void)
     rex_vm_t  vm;
     char test_str[TEST_STR_SZ] = {0};
     rex_match_t extract;  
+    size_t len;
     matches = 1;
 
     vm.memory = buffer;
@@ -233,7 +240,8 @@ test_alphanumeric_random_sequence_offset(void)
             ri %= 63;
             test_str[j] = Alphanumeric_pass[ri][0];
         }
-        test_str[(((uint32_t) rand()) % (TEST_STR_SZ-1))+1] = 0; 
+        len =(((uint32_t) rand()) % (TEST_STR_SZ-2))+2; 
+        test_str[len] = 0; 
         err = rex_vm_exec(
             &vm,
             test_str,
@@ -246,12 +254,12 @@ test_alphanumeric_random_sequence_offset(void)
             &match
         );
         ret = !match || err  ? 1 : ret;
-        ret |= !(extract.match == test_str+1 && extract.match_sz == ri - 1); 
+        ret |= !(extract.match == test_str+1 && extract.match_sz == len - 1); 
         if (ret) break;
     }
     printf(
         "\\w+ MATCHES RANDOM ALPHANUMERIC STRINGS WITH OFFSET: %s",  
-        match && !err ? "PASS" : "FAIL"
+        !ret ? "PASS" : "FAIL"
     );
     if (err)
     {
@@ -1120,9 +1128,14 @@ test_start_end_assertions(void)
 
 
 
-int main(void)
+int main(int argc, char ** argv)
 {
     int ret = 0;
+    unsigned int seed;
+
+    seed = (argc == 1) ? (unsigned int) time(NULL) : atoi(argv[1]);
+    printf("Using Seed: %u\n", seed);
+        
     ret |= test_alphanumeric_single();
     ret |= test_alphanumeric_single_match_extraction();
     ret |= test_alphanumeric_random_sequence();
