@@ -1125,8 +1125,8 @@ test_start_end_assertions(void)
     }
     return ret;
 }
-/* TODO: SHould be .*?\b. */
-/* \b. */
+
+/* Instructions for find next \b. */
 rex_instruction_t word_boundary[9] = {
     REX_INSTRUCTION(REX_OPCODE_BWP, 4),
     REX_INSTRUCTION(REX_OPCODE_LR, 0),
@@ -1134,6 +1134,13 @@ rex_instruction_t word_boundary[9] = {
     REX_INSTRUCTION(REX_OPCODE_J, 0),
     REX_INSTRUCTION(REX_OPCODE_SS, 0),
     REX_INSTRUCTION(REX_OPCODE_AWB, 0),
+    REX_INSTRUCTION(REX_OPCODE_LR, 0),
+    REX_INSTRUCTION(REX_OPCODE_HRA, 0),
+    REX_INSTRUCTION(REX_OPCODE_M, 0)
+};
+
+rex_instruction_t not_word_boundary[4] = {
+    REX_INSTRUCTION(REX_OPCODE_ANWB, 0),
     REX_INSTRUCTION(REX_OPCODE_LR, 0),
     REX_INSTRUCTION(REX_OPCODE_HRA, 0),
     REX_INSTRUCTION(REX_OPCODE_M, 0)
@@ -1166,7 +1173,7 @@ test_word_boundary_assertions(void)
                 SIZE_MAX,
                 cpi,
                 word_boundary,
-                4,
+                9,
                 &extract,
                 1,
                 &match
@@ -1184,6 +1191,26 @@ test_word_boundary_assertions(void)
         ret |= err;
         if (ret) break;
     }
+
+    for (ei = 0, cpi = 0; text[cpi]; cpi++)
+    {
+        err = rex_vm_exec(
+                &vm,
+                text,
+                SIZE_MAX,
+                cpi,
+                not_word_boundary,
+                4,
+                NULL,
+                0,
+                &match
+        );
+        ret = match != (cpi != expected_boundaries[ei]);
+        ei += cpi == expected_boundaries[ei];
+        ret |= err;
+        if (ret) break;
+    }
+
     printf(
         "WORD BOUNDARY ANCHOR ASSERTIONS: %s",
         !ret ? "PASS" : "FAIL"
@@ -1196,6 +1223,11 @@ test_word_boundary_assertions(void)
     }
     return ret;
 }
+
+
+/* TODO:
+ * Test missing match instruction
+ */
 int main(int argc, char ** argv)
 {
     int ret = 0;
