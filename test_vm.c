@@ -1125,9 +1125,77 @@ test_start_end_assertions(void)
     }
     return ret;
 }
+/* TODO: SHould be .*?\b. */
+/* \b. */
+rex_instruction_t word_boundary[9] = {
+    REX_INSTRUCTION(REX_OPCODE_BWP, 4),
+    REX_INSTRUCTION(REX_OPCODE_LR, 0),
+    REX_INSTRUCTION(REX_OPCODE_HRA, 0),
+    REX_INSTRUCTION(REX_OPCODE_J, 0),
+    REX_INSTRUCTION(REX_OPCODE_SS, 0),
+    REX_INSTRUCTION(REX_OPCODE_AWB, 0),
+    REX_INSTRUCTION(REX_OPCODE_LR, 0),
+    REX_INSTRUCTION(REX_OPCODE_HRA, 0),
+    REX_INSTRUCTION(REX_OPCODE_M, 0)
+};
 
 
 
+int
+test_word_boundary_assertions(void)
+{
+    char text[] = "ABC abc_1234 _ 1234 abc/def /abc";
+    size_t expected_boundaries[13] = 
+        {0, 3, 4, 12, 13, 14, 15, 19, 20, 23, 24, 27, 29};
+    size_t cpi, ei;
+    int err;
+    int ret = 0;
+    uint8_t buffer[1024];
+    rex_vm_t  vm;
+    rex_match_t extract;
+    int match;
+
+    vm.memory = buffer;
+    vm.memory_sz = 1023;
+
+    for (cpi = 0, ei = 0; text[cpi]; cpi++, ei++)
+    {
+        err = rex_vm_exec(
+                &vm,
+                text,
+                SIZE_MAX,
+                cpi,
+                word_boundary,
+                4,
+                &extract,
+                1,
+                &match
+        );
+        if (!match)
+        {
+            ret = ei < 13;
+        }else
+        {
+            ret =   !(extract.match == text + expected_boundaries[ei] &&
+                    extract.match_sz == 1);
+            /* TODO: This cannot be the way to iterate over things in final API */
+            cpi= extract.match - text;
+        }
+        ret |= err;
+        if (ret) break;
+    }
+    printf(
+        "WORD BOUNDARY ANCHOR ASSERTIONS: %s",
+        !ret ? "PASS" : "FAIL"
+    );
+    if (err)
+    {
+        printf(" WITH ERROR: %d\n",err); 
+    }else{
+        putchar('\n');
+    }
+    return ret;
+}
 int main(int argc, char ** argv)
 {
     int ret = 0;
@@ -1149,6 +1217,7 @@ int main(int argc, char ** argv)
     ret |= test_bad_params();
     ret |= test_alphanumeric_random_sequence_with_submatches();
     ret |= test_start_end_assertions();
+    ret |= test_word_boundary_assertions();
     if (ret) goto exit;
 
 exit:

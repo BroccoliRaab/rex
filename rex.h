@@ -1676,6 +1676,7 @@ rex_vm_exec(
         /* Some instruction sequences are handled
          * as if they were a single instruction
          */
+        /* TODO: Decide if it makes sense to refactor this into a while loop */
         thread_continue:
             inst = i_prog[pc];
 
@@ -1734,7 +1735,7 @@ rex_vm_exec(
                 );
                 break;
             case REX_OPCODE_AWB:
-                if (prev_word != REX_ISWORD(cp)) break;
+                if (prev_word == REX_ISWORD(cp)) break;
                 pc = ++*(uint32_t *)cthread;
                 rex_vm_thread_expand(
                     &clist, 
@@ -1744,7 +1745,7 @@ rex_vm_exec(
                 );
                 goto thread_continue;
             case REX_OPCODE_ANWB:
-                if (prev_word == REX_ISWORD(cp)) break;
+                if (prev_word != REX_ISWORD(cp)) break;
                 pc = ++*(uint32_t *)cthread;
                 rex_vm_thread_expand(
                     &clist, 
@@ -1784,6 +1785,7 @@ rex_vm_exec(
             case REX_OPCODE_BWP:
             case REX_OPCODE_J:
                 /* Handled by thread expand */
+                /*FALLTHROUGH*/
             default:
                 return REX_BAD_INSTRUCTION;
 
