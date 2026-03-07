@@ -1165,7 +1165,7 @@ test_word_boundary_assertions(void)
     vm.memory = buffer;
     vm.memory_sz = 1023;
 
-    for (cpi = 0, ei = 0; text[cpi]; cpi++, ei++)
+    for (cpi = 0, ei = 0; text[cpi] && !ret; cpi++, ei++)
     {
         err = rex_vm_exec(
                 &vm,
@@ -1180,19 +1180,18 @@ test_word_boundary_assertions(void)
         );
         if (!match)
         {
-            ret = ei < 13;
+            ret |= ei < 13;
         }else
         {
-            ret =   !(extract.match == text + expected_boundaries[ei] &&
+            ret |=   !(extract.match == text + expected_boundaries[ei] &&
                     extract.match_sz == 1);
             /* TODO: This cannot be the way to iterate over things in final API */
             cpi= extract.match - text;
         }
         ret |= err;
-        if (ret) break;
     }
 
-    for (ei = 0, cpi = 0; text[cpi]; cpi++)
+    for (ei = 0, cpi = 0; text[cpi] & !ret; cpi++)
     {
         err = rex_vm_exec(
                 &vm,
@@ -1205,10 +1204,9 @@ test_word_boundary_assertions(void)
                 0,
                 &match
         );
-        ret = match != (cpi != expected_boundaries[ei]);
+        ret |= match != (cpi != expected_boundaries[ei]);
         ei += cpi == expected_boundaries[ei];
         ret |= err;
-        if (ret) break;
     }
 
     printf(
