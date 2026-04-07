@@ -83,55 +83,44 @@
 /* TYPES */
 typedef uint32_t rex_instruction_t;
 
+/* TODO: 
+ * x{n,m} reptition ( Not sure if this will change isa or generate more instructions or will be implemented at all 
+ * */
+
 /* REX_VM ARCHITECTURE */
 /* 
  * REX_VM is Virtual Machine that spawns multiple threads that are executed sequentially
  * Each thread has its own set of registers
  * Sequential thread execution allows prioritizing one code path over another
  * This priority determines match disambiguation rules and allows lazy matching
- * MATCH_SIZE and MATCH_FOUND are set and all threads halt when a match is found
+ * VM halts when all 
  * The max thread count spawned for any program is equal to the amount of instructions in the program
  */
 
 /* UNIFORMS */
-/* MATCH_FOUND 
+/* MATCH_FOUND MF
 *      True if REX_VM has found a matching pattern in text
  *
- * MATCH_SIZE
- *      Holds the number of codepoints searched for pattern
  */
 
 /*REGISTERS*/
 /*
- * PROGRAM_COUNTER
+ * PROGRAM_COUNTER PC
  *      Stores the current index of vm instruction
  *      Initialized to (~0) for a halted thread
- * RANGE_MAX_VALUE
+ * RANGE_MAX_VALUE R
  *      Stores the max value of a code point range
+ *
  */
 
-/* TODO: ISA overhaul from most to least important
- * Add word boundary assertions  \b \B 
- * x{n,m} reptition ( Not sure if this will change isa or generate more instructions or will be implemented at all 
- * */
-
-/* ISA
- * OLD:
- * HALT_IMMEDIATE
- * HALT_NOT_IMMEDIATE
- * LOAD_RANGE_MAX_VAL
- * HALT_RANGE
- * MATCH
- * SPLIT
- * JUMP
- *
- * NEW:
- * HI           Halt Immediate
+/* INSTRUCTIONS */
+/*
  * HIA          Halt Immediate Advance
- * HNI          Halt Not Immediate
+ * HI           Halt Immediate
  * HNIA         Halt Not Immediate Advance
- * HR           Halt Range
+ * HNI          Halt Not Immediate
  * HRA          Halt Range Advance
+ * HR           Halt Range
  * AWB          Assert Word Boundary
  * ANWB         Assert Not Word Boundary
  * AE           Assert End
@@ -139,10 +128,159 @@ typedef uint32_t rex_instruction_t;
  * LR           Load Range
  * SS           Save Submatch
  * M            Match
- * B            Branch/Split
  * BWP          Branch/Split With Priority
+ * B            Branch/Split
  * J            Jump
- * */
+ *
+ * Halt_Immediate_Advance HIA
+ *       ______________________
+ *      |8bit|      24 bit    |
+ *      -----------------------
+ *      | OP |        cp0     |
+ *      -----------------------
+ *      OP = 0x82
+ *      If current codepoint matches immediate value cp0 halt the thread
+ *      Advances the character pointer
+ *
+ * Halt_Immediate HI
+ *       ______________________
+ *      |8bit|      24 bit    |
+ *      -----------------------
+ *      | OP |        cp0     |
+ *      -----------------------
+ *      OP = 0x81
+ *      If current codepoint matches immediate value cp0 halt the thread
+ *
+ * Halt_Not_Immediate_Advance HNIA
+ *       ______________________
+ *      |8bit|      24 bit    |
+ *      -----------------------
+ *      | OP |        cp0     |
+ *      -----------------------
+ *      OP = 0x84
+ *      If current codepoint does not match immediate value cp0 halt the thread
+ *      Advances the character pointer
+ *
+ * Halt_Not_Immediate HNI
+ *       ______________________
+ *      |8bit|      24 bit    |
+ *      -----------------------
+ *      | OP |        cp0     |
+ *      -----------------------
+ *      OP = 0x83
+ *      If current codepoint does not match immediate value cp0 halt the thread
+ *
+ * Halt_Range_Advance HRA
+ *       ______________________
+ *      |8bit|      24 bit    |
+ *      -----------------------
+ *      | OP |        cp0     |
+ *      -----------------------
+ *      OP = 0x86
+ *      If the range [cp0, R] contains the current codepoint halt the thread
+ *      Advances the character pointer
+ *      
+ *
+ * Halt_Range HR
+ *       ______________________
+ *      |8bit|      24 bit    |
+ *      -----------------------
+ *      | OP |        cp0     |
+ *      -----------------------
+ *      OP = 0x85
+ *      If the range [cp0, R] contains the current codepoint halt the thread
+ *
+ * Assert_Word_Boundary AWB
+ *       ______________________
+ *      |8bit|      24 bit    |
+ *      -----------------------
+ *      | OP |      unused    |
+ *      -----------------------
+ *      OP = 0xA1
+ *      If the current codepoint is not a word boundary halt
+ *
+ * Assert_Not_Word_Boundary ANWB
+ *       ______________________
+ *      |8bit|      24 bit    |
+ *      -----------------------
+ *      | OP |      unused    |
+ *      -----------------------
+ *      OP = 0xA2
+ *      If the current codepoint is a word boundary halt
+ *
+ * Assert_End AE
+ *       ______________________
+ *      |8bit|      24 bit    |
+ *      -----------------------
+ *      | OP |      unused    |
+ *      -----------------------
+ *      OP = 0xA3
+ *      If the current codepoint is not the final codepoint in the string halt
+ *
+ * Assert_End AE
+ *       ______________________
+ *      |8bit|      24 bit    |
+ *      -----------------------
+ *      | OP |      unused    |
+ *      -----------------------
+ *      OP = 0xA4
+ *      If the current codepoint is not the first codepoint in the string halt
+ *
+ * Load_Range_Max_Val LR
+ *       ______________________
+ *      |8bit|      24 bit    |
+ *      -----------------------
+ *      | OP |        cp0     |
+ *      -----------------------
+ *      OP = 0xB1
+ *      Move immedate cp0 to register R
+ * 
+ * Save_Submatch SS
+ *       ______________________
+ *      |8bit|      24 bit    |
+ *      -----------------------
+ *      | OP |  marker index  |
+ *      -----------------------
+ *      OP = 0xB2
+ *      Store character pointer at immediate marker index
+ *
+ * Branch_With_Priority BWP
+ *       ______________________
+ *      |2bit|      32 bit    |
+ *      -----------------------
+ *      | OP |     address    |
+ *      -----------------------
+ *      OP = 0x02
+ *      Branch this thread and execute before continuing
+ *
+ * Branch B
+ *       ______________________
+ *      |2bit|      32 bit    |
+ *      -----------------------
+ *      | OP |     address    |
+ *      -----------------------
+ *      OP = 0x01
+ *      Branch this thread and continue before execution
+ *
+ * Jump J
+ *       ______________________
+ *      |2bit|      32 bit    |
+ *      -----------------------
+ *      | OP |     address    |
+ *      -----------------------
+ *      OP = 0x00
+ *      Load address into pc
+ *
+ * Match M
+ *       ______________________
+ *      |8bit|      24 bit    |
+ *      -----------------------
+ *      | OP |        cp0     |
+ *      -----------------------
+ *      OP = 0x90
+ *      Set the matched register MF
+ *
+ */
 
 #define REX_ISA_ITYPE_X(X)      \
     X(HIA, 0x82000000)          \
@@ -186,90 +324,6 @@ typedef enum rex_opcode_e
     REX_ISA_X(REX_OPCODE_ENUM_EXPAND)
 }rex_opcode_t;
 
-// TODO: Replace old isa
-/* REX_VM INSTRUCTION SET */
-#define REX_HALT_IMMEDIATE (0x81)
-/*
- * HALT_IMMEDIATE
- *       ______________________
- *      |8bit|      24 bit    |
- *      -----------------------
- *      | OP |        cp0     |
- *      -----------------------
- *      OP = 0b10000001
- *      If current codepoint matches immediate value cp0 halt the thread
- */
-
-#define REX_HALT_NOT_IMMEDIATE (0x83)
-/* HALT_NOT_IMMEDIATE
- *       ______________________
- *      |8bit|      24 bit    |
- *      -----------------------
- *      | OP |        cp0     |
- *      -----------------------
- *      OP = 0b10000011
- *      If current codepoint does not match immediate value cp0 halt the thread
-*/
-
-#define REX_LOAD_RANGE_MAX_VAL (0xC2)
-/* LOAD_RANGE_MAX_VAL
- *       ______________________
- *      |8bit|      24 bit    |
- *      -----------------------
- *      | OP |        cp1     |
- *      -----------------------
- *      OP = 0b11000010
- *      Load the codepoint cp1 into the RANGE_MAX_VALUE register
- */
-
-#define REX_HALT_RANGE (82)
-/* HALT_RANGE
- *       ______________________
- *      |8bit|      24 bit    |
- *      -----------------------
- *      | OP |        cp0     |
- *      -----------------------
- *      OP = 0b10000010
- *      Current codepoint: cp
- *      Codepoint range bottom immediate: cp0
- *      Codepoint range top in register RANGE_MAX_VALUE: cp1
- *      If cp0 <= cp <= cp1 halt the current thread
- */
-
-#define REX_MATCH (0xFF)
-/* MATCH
- *       ______________________
- *      |8bit|      24 bit    |
- *      -----------------------
- *      | OP |     unused     |
- *      -----------------------
- *      OP = 0b11111111
- *      Set uniform MATCH_FOUND to true
- *      Set unform  MATCH_SIZE to current codepoint index
- */
-
-#define REX_SPLIT (0x40)
-/* SPLIT
- *       ______________________
- *      |2bit|      30 bit    |
- *      -----------------------
- *      | OP |        pc1     |
- *      -----------------------
- *      OP = 0b01
- *      Spawn a new thread with PROGRAM_COUNTER initialized to pc1
- */
-    
-#define REX_JUMP (0x0)
-/* JUMP
- *       ______________________
- *      |2bit|      30 bit    |
- *      -----------------------
- *      | OP |        pc1     |
- *      -----------------------
- *      OP = 0b00
- *      Set this threads PROGRAM_COUNTER to pc1
-*/
-
 /* PARSERS */
 
 /* All parsers stop when the length of the string is exceded
@@ -284,15 +338,6 @@ typedef enum rex_opcode_e
  *
  * Any further arguments are outputs of the parser
  * All outputs may be NULL
- */
-
-/* LUT for ASCII Character Classes
- * Replace isreserved, isword, isdigit with LUT macros
- * 
- * LSB -> MSB
- * isreserved
- * isword
- * isdigit
  */
 
 /* TODO: 
@@ -816,7 +861,7 @@ static const rex_range_t rex_D_range_set[2] =
 {
     {0, '0'-1}, {'9'+1, REX_MAX_UNICODE_VAL}
 };
-
+#if 0
 /* Inserts 2 instructions */
 #define REX_HALT_RANGE_INSTRUCTIONS(r0, r1)      \
     REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, r1), \
@@ -883,6 +928,7 @@ static const rex_instruction_t rex_D_inst_set[2] =
     REX_INSTRUCTION(REX_HALT_RANGE, '0'),
 
 };
+#endif
 
 /* Helper functions for extracting character ranges from character sets */
 #define REX_MAX(start0, start1) \
@@ -1105,14 +1151,14 @@ rex_compile_mcset(
         if (r0 == r1)
         {
             if (o_prog) 
-                o_prog[sz] = REX_INSTRUCTION(REX_HALT_IMMEDIATE, r0);
+                o_prog[sz] = REX_INSTRUCTION(REX_OPCODE_HI, r0);
             sz++;
         }else
         {
             if (o_prog)
             {
-                o_prog[sz] = REX_INSTRUCTION(REX_LOAD_RANGE_MAX_VAL, r1);
-                o_prog[sz+1] = REX_INSTRUCTION(REX_HALT_RANGE, r0);
+                o_prog[sz] = REX_INSTRUCTION(REX_OPCODE_LR, r1);
+                o_prog[sz+1] = REX_INSTRUCTION(REX_OPCODE_HR, r0);
             }
             sz += 2;
         }
@@ -1130,6 +1176,8 @@ rex_compile_charset(
     rex_instruction_t * const o_prog
 )
 {
+    return 0;
+#if 0
     const char * cp = i_cs;
     switch (*cp)
     {
@@ -1209,10 +1257,15 @@ rex_compile_charset(
             *o_prog = REX_INSTRUCTION(REX_HALT_NOT_IMMEDIATE, *cp);
         return 1;
     }
+#endif
 }
 /* Places AST into the bottom of memory as a stack
  * Tokens are each one uint8_t
  * Following a charset token is the charset string
+ */
+
+/* TODO:
+ * put the ast stack on the top of memory this will require less ast rots
  */
 
 static inline int
@@ -1388,6 +1441,8 @@ rex_ast_compile(
     size_t i_prog_sz
 )
 {
+    return 0;
+#if 0
     size_t  prog_i = 0;
     size_t ast_sz = io_compiler->ctx.ast_ctx.ast_sz;
     uint8_t *ast_top = io_compiler->ctx.ast_ctx.ast_top;
@@ -1403,6 +1458,7 @@ rex_ast_compile(
         o_prog[prog_i] = REX_INSTRUCTION(REX_SPLIT, prog_i+1);
 
     }
+#endif
     
 }
 
@@ -1421,7 +1477,7 @@ typedef struct rex_vm_threadlist_s rex_vm_threadlist_t;
 
 /* IDEA:
  * Instructions that do not advance the character pointer and do not jump
- * can short circuit the loop and just advance to the next instruction.
+ * can short circuit t he loop and just advance to the next instruction.
  * Then the number of threads needed are only the number of threads that jump or advance.
  *
  * ^ may even be able to short circuit jumps.
@@ -1441,13 +1497,6 @@ struct rex_match_s
     const char * match;
     size_t match_sz;
 };
-
-struct rex_vm_s
-{
-    void * memory;
-    size_t memory_sz;
-};
-
 struct rex_vm_threadlist_s
 {
     void * buffer;
@@ -1599,13 +1648,285 @@ rex_vm_thread_expand(
     }
 }
 
+
+struct rex_vm_s
+{
+    void * memory;
+    size_t memory_sz;
+    const char * string;
+    size_t string_sz;
+    size_t string_start;
+    const rex_instruction_t * prog;
+    size_t prog_sz;
+    rex_match_t * matches;
+    size_t matches_sz;
+    rex_vm_threadlist_t clist, nlist;
+    size_t thread_sz;
+    size_t cpi, l, ti, mi;
+    uint32_t  pc;
+    uint32_t cp, rcp1;
+    uint8_t prev_word;
+    void * cthread;
+    int match;
+    int halted;
+};
+
+static int
+rex_vm_exec_step(
+    rex_vm_t * io_vm
+){
+    rex_instruction_t inst;
+    uint32_t imm;
+    rex_vm_threadlist_t tmp;
+        if(io_vm->ti < io_vm->clist.thread_count)
+        {
+            io_vm->cthread = rex_vm_thread_by_index(&io_vm->clist, io_vm->ti);
+            io_vm->pc = *(uint32_t*) io_vm->cthread;
+
+        /* Some instruction sequences are handled
+         * as if they were a single instruction
+         */
+        /* TODO: Decide if it makes sense to refactor this into a while loop */
+        thread_continue:
+            inst = io_vm->prog[io_vm->pc];
+
+            imm = REX_IMM_FROM_INST(inst);
+            switch ((rex_opcode_t)REX_OP_FROM_INST(inst))
+            {
+            case REX_OPCODE_HI:
+                if (io_vm->cp == imm) break;
+                io_vm->pc++;
+                goto thread_continue;
+            case REX_OPCODE_HIA:
+                if (io_vm->cp == imm) break;
+                rex_vm_threadlist_push(
+                    &io_vm->nlist, 
+                    REX_MARKERS(io_vm->cthread),
+                    io_vm->pc + 1); 
+                rex_vm_thread_expand(
+                    &io_vm->nlist, 
+                    io_vm->nlist.thread_count - 1,
+                    io_vm->prog,
+                    io_vm->string + io_vm->cpi + io_vm->l
+                );
+                break;
+            case REX_OPCODE_HNI:
+                if (io_vm->cp != imm) break;
+                io_vm->pc++;
+                goto thread_continue;
+            case REX_OPCODE_HNIA:
+                if (io_vm->cp != imm) break;
+                rex_vm_threadlist_push(
+                    &io_vm->nlist, 
+                    REX_MARKERS(io_vm->cthread),
+                    io_vm->pc + 1); 
+                rex_vm_thread_expand(
+                    &io_vm->nlist, 
+                    io_vm->nlist.thread_count - 1,
+                    io_vm->prog,
+                    io_vm->string + io_vm->cpi + io_vm->l
+                );
+                break;
+            case REX_OPCODE_HR:
+                if (io_vm->cp >= imm && io_vm->cp <= io_vm->rcp1) break;
+                io_vm->pc++;
+                goto thread_continue;
+            case REX_OPCODE_HRA:
+                if (io_vm->cp >= imm && io_vm->cp <= io_vm->rcp1) break;
+                rex_vm_threadlist_push(
+                    &io_vm->nlist, 
+                    REX_MARKERS(io_vm->cthread),
+                    io_vm->pc + 1); 
+                rex_vm_thread_expand(
+                    &io_vm->nlist, 
+                    io_vm->nlist.thread_count - 1,
+                    io_vm->prog,
+                    io_vm->string + io_vm->cpi + io_vm->l
+                );
+                break;
+            case REX_OPCODE_AWB:
+                if (io_vm->prev_word == REX_ISWORD(io_vm->cp)) break;
+                io_vm->pc = ++*(uint32_t *)io_vm->cthread;
+                rex_vm_thread_expand(
+                    &io_vm->clist, 
+                   io_vm->ti,
+                    io_vm->prog,
+                    io_vm->string + io_vm->cpi + io_vm->l
+                );
+                goto thread_continue;
+            case REX_OPCODE_ANWB:
+                if (io_vm->prev_word != REX_ISWORD(io_vm->cp)) break;
+                io_vm->pc = ++*(uint32_t *)io_vm->cthread;
+                rex_vm_thread_expand(
+                    &io_vm->clist, 
+                   io_vm->ti,
+                    io_vm->prog,
+                    io_vm->string + io_vm->cpi + io_vm->l
+                );
+                goto thread_continue;
+            case REX_OPCODE_AE:
+                if (io_vm->string_sz - io_vm->cpi != 0)
+                    if (io_vm->string[io_vm->cpi] != 0)
+                        break;
+                io_vm->pc = ++*(uint32_t *)io_vm->cthread;
+                rex_vm_thread_expand(
+                    &io_vm->clist, 
+                   io_vm->ti,
+                    io_vm->prog,
+                    io_vm->string + io_vm->cpi + io_vm->l
+                );
+                goto thread_continue;
+            case REX_OPCODE_AS:
+                if (io_vm->cpi != 0) break;
+                io_vm->pc = ++*(uint32_t *)io_vm->cthread;
+                rex_vm_thread_expand(
+                    &io_vm->clist, 
+                   io_vm->ti,
+                    io_vm->prog,
+                    io_vm->string + io_vm->cpi + io_vm->l
+                );
+                goto thread_continue;
+            case REX_OPCODE_LR:
+                io_vm->rcp1 = imm;
+                io_vm->pc++;
+                goto thread_continue;
+            case REX_OPCODE_SS:
+            case REX_OPCODE_B:
+            case REX_OPCODE_BWP:
+            case REX_OPCODE_J:
+                /* Handled by thread expand */
+                /*FALLTHROUGH*/
+            default:
+                return REX_BAD_INSTRUCTION;
+
+            case REX_OPCODE_M:
+                io_vm->match = 1;
+                if (io_vm->clist.marker_count > 1)
+                    REX_MARKERS(io_vm->cthread)[1] = io_vm->string + io_vm->cpi;
+                for (io_vm->mi = 0; io_vm->mi < io_vm->clist.marker_count; io_vm->mi+=2)
+                    io_vm->matches[io_vm->mi/2] = 
+                        (rex_match_t){
+                            REX_MARKERS(io_vm->cthread)[io_vm->mi],
+                            REX_MARKERS(io_vm->cthread)[io_vm->mi + 1] - REX_MARKERS(io_vm->cthread)[io_vm->mi]
+                    };
+                goto match;
+            } 
+           io_vm->ti++;
+            return REX_SUCESS;
+        }
+    /* Loop iteration. Match instruction shortcuts here*/
+    match:
+    tmp = io_vm->clist;
+    io_vm->clist = io_vm->nlist;
+    io_vm->nlist = tmp;
+    io_vm->nlist.thread_count = 0;
+    io_vm->prev_word = REX_ISWORD(io_vm->cp);
+    if (io_vm->cp == 0 || io_vm->l == 0)
+    {
+        io_vm->halted = 1;
+        return REX_SUCESS;
+    };
+
+    io_vm->cpi += io_vm->l;
+
+    io_vm->l = rex_parse_utf8_codepoint(
+        io_vm->string + io_vm->cpi,
+        io_vm->string_sz - io_vm->cpi,
+        &io_vm->cp
+    );
+    if (io_vm->l == 0 && io_vm->string_sz - io_vm->cpi != 0) io_vm->halted =1;
+    /* TODO:
+     * If we dont want it to be halted after finishing prog
+     * maybe remove? */
+    if (io_vm->clist.thread_count == 0) io_vm->halted =1;
+
+    io_vm->ti = 0;
+
+    return REX_SUCESS;
+}
+static int
+rex_vm_exec_init(
+    rex_vm_t * o_vm,
+    void * i_memory,
+    size_t i_memory_sz,
+    const char * const i_string,
+    const size_t i_string_sz,
+    const size_t i_string_start,
+    const rex_instruction_t * const i_prog,
+    const size_t i_prog_sz,
+    rex_match_t * o_matches,
+    size_t i_matches_sz
+    ){
+    if (!o_vm || !i_string || !i_prog ) return REX_BAD_PARAM;
+    
+    o_vm->thread_sz = i_matches_sz * 2 * sizeof(char *) + sizeof(uint32_t);
+    
+    if (o_vm->thread_sz * i_prog_sz * 2 > o_vm->memory_sz) return REX_OUT_OF_MEMORY;
+
+    REX_MEMSET(o_vm, 0, sizeof(rex_vm_t));
+    o_vm->memory = i_memory;
+    o_vm->memory_sz = i_memory_sz;
+    o_vm->string = i_string;
+    /*TODO: Did not halt on string_sz 0 */
+    o_vm->string_sz = i_string_sz;
+    o_vm->string_start = i_string_start;
+    o_vm->cpi = i_string_start;
+    o_vm->prog = i_prog;
+    o_vm->matches = o_matches;
+    o_vm->matches_sz = i_matches_sz;
+
+    /* Can look back one byte as any valid unicode byte will return false */
+    o_vm->prev_word = 
+        o_vm->cpi == 0 ? 0 : REX_ISWORD(o_vm->string[o_vm->cpi - 1]);
+
+
+    /* Put a thread with pc = 0 */
+    o_vm->clist.buffer = o_vm->memory;
+    *(uint32_t*)o_vm->clist.buffer = 0;
+    o_vm->clist.thread_count = 1;
+    o_vm->clist.marker_count = o_vm->matches_sz * 2;
+
+    o_vm->nlist.buffer = ((uint8_t*)o_vm->memory) + o_vm->memory_sz/2;
+    o_vm->nlist.thread_count = 0;
+    o_vm->nlist.marker_count = o_vm->matches_sz * 2;
+
+    o_vm->cthread = o_vm->clist.buffer;
+
+    if (o_vm->clist.marker_count)
+        REX_MARKERS(o_vm->cthread)[0] = o_vm->string + o_vm->cpi;
+
+    rex_vm_thread_expand(
+        &o_vm->clist, 
+        0,
+        i_prog,
+        i_string + o_vm->cpi
+    );
+    o_vm->l = rex_parse_utf8_codepoint(
+        i_string + o_vm->cpi,
+        i_string_sz - o_vm->cpi,
+        &o_vm->cp
+    );
+    if (o_vm->l == 0 && i_string_sz - o_vm->cpi != 0) o_vm->halted =1;
+    /* TODO:
+     * If we dont want it to be halted after finishing prog
+     * maybe remove? */
+    if (o_vm->clist.thread_count == 0) o_vm->halted =1;
+    return REX_SUCESS;
+
+}
+
 /* 
  * NOTES:
  * MARKER REGISTERS 0 and 1 are reserved for pattern match
  * If i_matches_sz is greater than actual submatch count
  * extra matches are undefined
  */
-
+/* TODO:
+ * Refactor this loop into a stateful iterator.
+ * This will allow for changing the the program while it is running
+ * for unanchored matches
+ */
+#if 0
 int
 rex_vm_exec(
     rex_vm_t * io_vm,
@@ -1815,6 +2136,44 @@ rex_vm_exec(
 
     return 0;
 }
+#else
+int
+rex_vm_exec(
+    rex_vm_t * io_vm,
+    const char * const i_string,
+    const size_t i_string_sz,
+    const size_t i_string_start,
+    const rex_instruction_t * const i_prog,
+    const size_t i_prog_sz,
+    rex_match_t * o_matches,
+    size_t i_matches_sz,
+    int * o_match_found
+)
+{
+    int r;
+    if (!io_vm || !i_string || !i_prog ) return REX_BAD_PARAM;
+    r = rex_vm_exec_init(
+        io_vm,
+        io_vm->memory,
+        io_vm->memory_sz,
+        i_string,
+        i_string_sz,
+        i_string_start,
+        i_prog,
+        i_prog_sz,
+        o_matches,
+        i_matches_sz
+    );
+    if (r) return r;
 
+    while (
+     ( (r = rex_vm_exec_step(io_vm))==0 && !io_vm->halted)
+    );
+    if (o_match_found) *o_match_found = io_vm->match;
+
+    return r;
+}
+
+#endif
 
 
