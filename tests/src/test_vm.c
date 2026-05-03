@@ -805,8 +805,8 @@ int test_illegal_instruction(void)
     uint8_t buffer[128];
     rex_vm_t  vm;
     rex_instruction_t prog[] = {
-        0xB3FFFFFF,
-        0xA5FFFFFF
+        0xFFFFFFFF >> 2,
+        0x01FFFFFF
     };
     
     vm.memory = buffer;
@@ -828,7 +828,7 @@ int test_illegal_instruction(void)
     );
     putchar('\n');
 
-    return  err != REX_BAD_INSTRUCTION;
+    return err != REX_BAD_INSTRUCTION;
 }
 
 int test_bad_params(void)

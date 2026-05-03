@@ -15,8 +15,8 @@ assemble_instruction(
     if (sscanf(i_str, #op" %c\n", (char *)&immediate) > 0) return immediate | byte;   
 
     uint32_t immediate = 0;
-    if (*i_str == 'M') return REX_ISA_MATCH;
-    REX_ISA_ITYPE_X(ASSEMBLE);
+    if (*i_str == 'M') return 0;
+    REX_ISA_X(ASSEMBLE);
     return 0;
 #undef ASSEMBLE
 }
