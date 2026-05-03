@@ -1672,14 +1672,12 @@ struct rex_vm_s
 };
 
 static int
-rex_vm_exec_step(
+rex_vm_exec_thread(
     rex_vm_t * io_vm
 ){
+    
     rex_instruction_t inst;
     uint32_t imm;
-    rex_vm_threadlist_t tmp;
-        if(io_vm->ti < io_vm->clist.thread_count)
-        {
             io_vm->cthread = rex_vm_thread_by_index(&io_vm->clist, io_vm->ti);
             io_vm->pc = *(uint32_t*) io_vm->cthread;
 
@@ -1809,13 +1807,25 @@ rex_vm_exec_step(
                             REX_MARKERS(io_vm->cthread)[io_vm->mi],
                             REX_MARKERS(io_vm->cthread)[io_vm->mi + 1] - REX_MARKERS(io_vm->cthread)[io_vm->mi]
                     };
-                goto match;
+                io_vm->ti = SIZE_MAX;
+                return REX_SUCESS;
             } 
-           io_vm->ti++;
+            io_vm->ti++;
             return REX_SUCESS;
-        }
-    /* Loop iteration. Match instruction shortcuts here*/
-    match:
+}
+
+
+static int
+rex_vm_exec_step(
+    rex_vm_t * io_vm
+){
+    rex_vm_threadlist_t tmp;
+    if(io_vm->ti < io_vm->clist.thread_count)
+    {
+        return rex_vm_exec_thread(io_vm);
+    }
+    
+    /* Swap clist and nlist */
     tmp = io_vm->clist;
     io_vm->clist = io_vm->nlist;
     io_vm->nlist = tmp;
