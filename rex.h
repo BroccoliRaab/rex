@@ -505,19 +505,20 @@ typedef enum rex_token_e rex_token_t;
 
 static inline size_t
 rex_parse_utf8_codepoint(
-    const unsigned char * const i_str,
+    const char * const i_str,
     size_t i_len,
     uint32_t * const o_cp
 ){
     uint8_t b;
+    const unsigned char * const u_str = (const unsigned char * const) i_str;
     uint8_t l, mask, shift, i;
     uint32_t cp;
     static const uint8_t lo5[] = {
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 4, 5
     };
-    if (!(i_len && i_str)) return 0;
-    b = *i_str;
+    if (!(i_len && u_str)) return 0;
+    b = *u_str;
     l = lo5[b>>3]; 
     if (l > i_len) return 0;
     cp = 0;
@@ -531,16 +532,16 @@ rex_parse_utf8_codepoint(
         if (o_cp) *o_cp = b;
         return 1;
     case 4:
-        l *= i_str[i] >> 6 == 2;
-        cp |= (i_str[i++] & 0x3f) << 12;
+        l *= u_str[i] >> 6 == 2;
+        cp |= (u_str[i++] & 0x3f) << 12;
         /* FALLTHROUGH */
     case 3:
-        l *= i_str[i] >> 6 == 2;
-        cp |= (i_str[i++] & 0x3f) << 6;
+        l *= u_str[i] >> 6 == 2;
+        cp |= (u_str[i++] & 0x3f) << 6;
         /* FALLTHROUGH */
     case 2:
-        l *= i_str[i] >> 6 == 2;
-        cp |= i_str[i++] & 0x3f;
+        l *= u_str[i] >> 6 == 2;
+        cp |= u_str[i++] & 0x3f;
         break;
     default:
         return 0;
