@@ -5,7 +5,7 @@ all: all_tests all_toys
 
 all_tests: tests/bin/test_vm
 
-all_toys: toys/bin/assembler toys/bin/charset_parser
+all_toys: toys/bin/assembler toys/bin/regex_parser toys/bin/charset_parser
 
 tests/bin/test_vm: rex.h tests/src/test_vm.c
 	$(CC) tests/src/test_vm.c $(CFLAGS) -o tests/bin/test_vm 
@@ -15,6 +15,9 @@ toys/bin/assembler: rex.h toys/src/assembler.c
 
 toys/bin/charset_parser: rex.h toys/src/charset_parser.c
 	$(CC) toys/src/charset_parser.c $(CFLAGS) -o toys/bin/charset_parser
+
+toys/bin/regex_parser: rex.h toys/src/regex_parser.c
+	$(CC) toys/src/regex_parser.c $(CFLAGS) -o toys/bin/regex_parser
 
 
 clean:

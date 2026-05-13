@@ -485,6 +485,24 @@ enum rex_token_e
 };
 typedef enum rex_token_e rex_token_t;
 
+#define REX_TOKEN_X(X) \
+    X(REX_TOKEN_CHARSET) \
+    X(REX_TOKEN_RPAREN) \
+    X(REX_TOKEN_LPAREN) \
+    X(REX_TOKEN_ALTERNATION) \
+    X(REX_TOKEN_CONCAT) \
+    X(REX_TOKEN_KLEEN) \
+    X(REX_TOKEN_KLEEN_LAZY) \
+    X(REX_TOKEN_QUESTION) \
+    X(REX_TOKEN_QUESTION_LAZY) \
+    X(REX_TOKEN_PLUS) \
+    X(REX_TOKEN_PLUS_LAZY) \
+    X(REX_TOKEN_ALTERNATION_INFIX) \
+    X(REX_TOKEN_ALTERNATION_SUFFIX) \
+    X(REX_TOKEN_QUESTION_SUFFIX) \
+    X(REX_TOKEN_KLEEN_SUFFIX) \
+    X(REX_TOKEN_PLUS_SUFFIX)
+
 #define REX_UTF8_IS_MULTIBYTE(c)                        ((c) & 0x80)
 #define REX_UTF8_MULTIBYTE_MIN                          (2)
 #define REX_UTF8_MULTIBYTE_MAX                          (4)
@@ -1350,6 +1368,8 @@ rex_compile_charset(
 
 /* TODO:
  * put the ast stack on the top of memory this will require less ast rots
+ *
+ * will it?
  */
 
 static inline int
