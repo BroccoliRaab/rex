@@ -3,12 +3,15 @@ CFLAGS= -O0 -g -std=c99 -Wall -pedantic -I.
 
 all: all_tests all_toys
 
-all_tests: tests/bin/test_vm
+all_tests: tests/bin/test_vm tests/bin/test_stack
 
 all_toys: toys/bin/assembler toys/bin/regex_parser toys/bin/charset_parser
 
 tests/bin/test_vm: rex.h tests/src/test_vm.c
 	$(CC) tests/src/test_vm.c $(CFLAGS) -o tests/bin/test_vm 
+
+tests/bin/test_stack: rex.h tests/src/test_stack.c
+	$(CC) tests/src/test_stack.c $(CFLAGS) -o tests/bin/test_stack 
 
 toys/bin/assembler: rex.h toys/src/assembler.c
 	$(CC) toys/src/assembler.c $(CFLAGS) -o toys/bin/assembler

@@ -900,9 +900,9 @@ typedef struct rex_stack_s rex_stack_t;
  *  ceil may be greater than or less than floor;
  */
 struct rex_stack_s {
-    uint8_t * top;
-    uint8_t * floor;
-    uint8_t * ceil;
+    void * top;
+    void * floor;
+    void * ceil;
 };
 
 void * 
@@ -912,38 +912,41 @@ rex_stack_push(
     const size_t i_val_sz
 )
 {
-    if (io_stack->ceil > io_stack->top)
+    uint8_t * ceil = io_stack->ceil;
+    uint8_t * top = io_stack->top;
+    
+    if (ceil > top)
     {
-        if (io_stack->top + i_val_sz > io_stack->ceil) return NULL;
-        REX_MEMCPY(io_stack->top, i_val, i_val_sz);
-        io_stack->top += i_val_sz;
+        if (top + i_val_sz > ceil) return NULL;
+        REX_MEMCPY(top, i_val, i_val_sz);
+        top += i_val_sz;
     }else{
-        if (io_stack->top - i_val_sz < io_stack->ceil) return NULL;
-        io_stack->top -= i_val_sz;
-        REX_MEMCPY(io_stack->top, i_val, i_val_sz);
+        if (top - i_val_sz < ceil) return NULL;
+        top -= i_val_sz;
+        REX_MEMCPY(top, i_val, i_val_sz);
     }
-    return io_stack->top;
+    io_stack->top = top;
+    return top;
 }
 
 void * 
 rex_stack_pop(
     rex_stack_t * const io_stack,
-    void * const o_val,
     size_t i_val_sz
 )
 {
-    if (io_stack->top > io_stack->floor)
+    uint8_t * floor = io_stack->floor;
+    uint8_t * top = io_stack->top;
+    if (top > floor)
     {
-        if (io_stack->top - i_val_sz > io_stack->floor) return NULL;
-        io_stack->top -= i_val_sz;
-        REX_MEMCPY(o_val, io_stack->top, i_val_sz);
+        if (top - i_val_sz < floor) return NULL;
+        top -= i_val_sz;
     }else{
-        if (io_stack->top + i_val_sz < io_stack->floor) return NULL;
-        REX_MEMCPY(o_val, io_stack->top, i_val_sz);
-        io_stack->top += i_val_sz;
+        if (top + i_val_sz > floor) return NULL;
+        top += i_val_sz;
     }
-
-    return io_stack->top;
+    io_stack->top = top;
+    return top;
 }
 
 void *
@@ -952,7 +955,7 @@ rex_stack_peek(
     const size_t i_val_sz
 ){
     if (io_stack->top > io_stack->floor)
-        return io_stack->top - i_val_sz;
+        return ((uint8_t*)io_stack->top) - i_val_sz;
     if (io_stack->top == io_stack->floor)
         return 0;
     return io_stack->top;
