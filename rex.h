@@ -70,6 +70,21 @@
 
 /* INTERFACE */
 
+typedef struct rex_s rex_t;
+
+struct rex_s
+{
+    void * memory;
+    size_t memory_sz;
+};
+
+/* rex_t
+ *
+ * This contains the buffer used during compilation and execution.
+ */
+
+
+
 #define REX_MAX_UNICODE_VAL (0x00FFFFFF)
 
 /* Error Code */
@@ -411,6 +426,8 @@ typedef uint32_t rex_instruction_t;
 
 #define REX_INSTRUCTION(op, imm) (((op) << 24) | (imm))
 
+#define REX_PC_MAX REX_JUMP_IMM_MASK
+
 /* PARSERS */
 
 /* All parsers stop when the length of the string is exceded
@@ -477,11 +494,12 @@ enum rex_token_e
     REX_TOKEN_PLUS,
     REX_TOKEN_PLUS_LAZY,
     /* Tokens inserted at compile time */
-    REX_TOKEN_ALTERNATION_INFIX,
-    REX_TOKEN_ALTERNATION_SUFFIX,
-    REX_TOKEN_QUESTION_SUFFIX,
-    REX_TOKEN_KLEEN_SUFFIX,
-    REX_TOKEN_PLUS_SUFFIX,
+    REX_TOKEN_ALTERNATION_STAGE_1,
+    REX_TOKEN_ALTERNATION_STAGE_2,
+    REX_TOKEN_QUESTION_STAGE_1,
+    REX_TOKEN_KLEEN_STAGE_1,
+    REX_TOKEN_PLUS_STAGE_1,
+    REX_TOKEN_PLUS_LAZY_STAGE_1,
 };
 typedef enum rex_token_e rex_token_t;
 
@@ -531,6 +549,7 @@ rex_parse_utf8_codepoint(
     const unsigned char * const u_str = (const unsigned char * const) i_str;
     uint8_t l, mask, shift, i;
     uint32_t cp;
+    /* LUT for leading ones count up to 5 bits */
     static const uint8_t lo5[] = {
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 4, 5
@@ -962,37 +981,15 @@ rex_stack_peek(
 }
 
 
-/* COMPILATION */
-enum rex_compiler_state_e{
-    REX_STATE_INIT,
-    REX_STATE_AST
-};
-
-typedef enum rex_compiler_state_e rex_compiler_state_t;
 typedef struct rex_compiler_s rex_compiler_t;
-typedef struct rex_compiler_lex_ctx_s rex_compiler_lex_ctx_t;
-typedef struct rex_compiler_ast_ctx_s rex_compiler_ast_ctx_t;
-typedef union rex_compiler_ctx_u rex_compiler_ctx_t;
 typedef struct rex_range_s rex_range_t;
-
-struct rex_compiler_ast_ctx_s
-{
-    uint8_t * ast_top;
-    size_t ast_sz; 
-};
-
-union rex_compiler_ctx_u
-{
-    rex_compiler_ast_ctx_t ast_ctx;
-};
 
 struct rex_compiler_s
 {
 
-    void * memory;
+    uint8_t * memory;
     size_t memory_sz;
-    rex_compiler_state_t state;
-    rex_compiler_ctx_t ctx;
+    uint8_t * ast_top;
 };
 
 struct rex_range_s
@@ -1380,7 +1377,6 @@ rex_build_ast(
     rex_compiler_t * const io_compiler
 )
 {
-    int r;
     size_t i;
     size_t l, op_stack_sz;
     rex_token_t tok, tok_tmp;
@@ -1394,7 +1390,7 @@ rex_build_ast(
     for (l = 0; l < i_len && i_str[l]; l+=i)
     {
         i = rex_parse_token(i_str+l, i_len, &tok);
-        if (!i) return 0;
+        if (!i) return REX_SYNTAX_ERROR;
 
     shunting_start:
         switch(tok)
@@ -1408,14 +1404,16 @@ rex_build_ast(
             break;
         case REX_TOKEN_LPAREN:
             /* PUSH TO OPSTACK */
-            if (op_stack + op_stack_sz + 1 >= ast_top) return 1;
+            if (op_stack + op_stack_sz + 1 >= ast_top)
+                return REX_OUT_OF_MEMORY;
             op_stack[op_stack_sz++] = tok;
             break;
         case REX_TOKEN_RPAREN:
             for (;tok != REX_TOKEN_LPAREN;)
             {
-                if(op_stack_sz == 0) return 2;
-                if (op_stack + op_stack_sz >= ast_top) return 1;
+                if(op_stack_sz == 0) return REX_SYNTAX_ERROR;
+                if (op_stack + op_stack_sz >= ast_top)
+                    return REX_OUT_OF_MEMORY;
                 /* POP AND EMIT TOP OF OPSTACK*/
                 *--ast_top = op_stack[--op_stack_sz];
             }
@@ -1424,12 +1422,12 @@ rex_build_ast(
             /* WHILE STACK_TOP PRECEDENCE > TOK */
             if (op_stack_sz) while(op_stack[op_stack_sz-1] > tok)
             {
-                if (op_stack + op_stack_sz >= ast_top) return 1;
+                if (op_stack + op_stack_sz >= ast_top) return REX_OUT_OF_MEMORY;
                 /* POP AND EMIT TOP OF OPSTACK*/
                 *--ast_top = op_stack[--op_stack_sz];
             }
             /* PUSH TOK TO OPSTACK */
-            if (op_stack + op_stack_sz + 1 >= ast_top) return 1;
+            if (op_stack + op_stack_sz + 1 >= ast_top) return REX_OUT_OF_MEMORY;
             op_stack[op_stack_sz++] = tok;
             
             break;
@@ -1452,7 +1450,6 @@ rex_build_ast(
                 /* Prevent tree mangling due to implicit concat */
                 tok = REX_TOKEN_CONCAT;
                 goto shunting_start;
-                if (r) return r;
             default:
                 break;
             }
@@ -1468,12 +1465,12 @@ rex_build_ast(
         /* POP AND EMIT TOP OF OPSTACK*/
         *--ast_top = op_stack[--op_stack_sz];
     }
-    io_compiler->ctx.ast_ctx.ast_top = ast_top;
-    return 0;
+    io_compiler->ast_top = ast_top;
+    return REX_SUCESS;
 }
 
 static inline size_t
-rex_count_ast(
+rex_ast_count(
     const uint8_t * const i_ast,
     const size_t i_max_sz
 )
@@ -1519,14 +1516,15 @@ rex_ast_rot(
 )
 {
     size_t r, l, toswap, move_sz, swap_sz;
-    uint8_t * const ast_top = io_compiler->ctx.ast_ctx.ast_top;
-    const size_t ast_sz = io_compiler->ctx.ast_ctx.ast_sz;
-    r = rex_count_ast(
+    uint8_t * const ast_top = io_compiler->ast_top;
+    const size_t ast_sz = 
+        io_compiler->memory + io_compiler->memory_sz - io_compiler->ast_top;
+    r = rex_ast_count(
         ast_top,
         ast_sz
     );
     if(!r) return 1;
-    l = rex_count_ast(
+    l = rex_ast_count(
         ast_top + r,
         ast_sz - r
     );
@@ -1540,6 +1538,36 @@ rex_ast_rot(
     }
     return 0;
 }
+static inline int
+rex_ast_insert(
+    rex_compiler_t *io_compiler,
+    uint8_t * i_data,
+    size_t i_data_sz
+)
+{
+    if ((io_compiler->ast_top - i_data_sz) < io_compiler->memory)
+        return REX_OUT_OF_MEMORY;
+    REX_MEMMOVE(
+        io_compiler->ast_top - i_data_sz,
+        io_compiler->ast_top,
+        i_data_sz
+    );
+    REX_MEMCPY(io_compiler->ast_top, i_data, i_data_sz);
+    io_compiler->ast_top -= i_data_sz;
+    return 0;
+}
+#define REX_AST_PUSH_PRIMITIVE(compiler, type, prim) \
+    if (compiler->ast_top - sizeof(type) < compiler->memory) \
+        return REX_OUT_OF_MEMORY; \
+    compiler->ast_top -= sizeof(type); \
+    *((type *)(compiler->ast_top)) = prim; \
+
+#define REX_AST_OVERFLOW_CHECK(io_compiler, size) \
+    if ( \
+        io_compiler->ast_top + size > \
+        io_compiler->memory + io_compiler->memory_sz \
+    ) return REX_SYNTAX_ERROR;
+
 
 static inline int
 rex_ast_compile(
@@ -1548,7 +1576,167 @@ rex_ast_compile(
     size_t i_prog_sz
 )
 {
-   return 0; 
+    uint8_t * const ast_floor = io_compiler->memory + io_compiler->memory_sz;
+    int r;
+    uint32_t mi = 2;
+    uint32_t pi, lookback;
+    uint8_t branch;
+
+
+    pi = 0;
+    while (io_compiler->ast_top < ast_floor) 
+    {
+        branch = REX_OPCODE_B;
+        switch((rex_token_t) *io_compiler->ast_top)
+        {
+        case REX_TOKEN_CHARSET:
+            return REX_SYNTAX_ERROR;
+
+        case REX_TOKEN_RPAREN:
+            if (o_prog) o_prog[pi] = REX_INSTRUCTION(REX_OPCODE_SS, mi);
+            mi++;
+            io_compiler->ast_top++;
+            break;
+
+        case REX_TOKEN_LPAREN:
+            if (o_prog) o_prog[pi] = REX_INSTRUCTION(REX_OPCODE_SS, mi);
+            mi++;
+            REX_AST_PUSH_PRIMITIVE(io_compiler, uint8_t, REX_TOKEN_RPAREN);
+            r = rex_ast_rot(io_compiler);
+            if (r) return r;
+            io_compiler->ast_top++;
+            r = rex_ast_rot(io_compiler);
+            if (r) return r;
+            break;
+
+        case REX_TOKEN_ALTERNATION:
+            io_compiler->ast_top++;
+            r = rex_ast_rot(io_compiler);
+            if (r) return r;
+            if (o_prog)
+                o_prog[pi] = REX_INSTRUCTION(REX_OPCODE_B, 0);
+            REX_AST_PUSH_PRIMITIVE(io_compiler, uint32_t, pi);
+            REX_AST_PUSH_PRIMITIVE(io_compiler, uint32_t, 
+                REX_TOKEN_ALTERNATION_STAGE_1);
+            r = rex_ast_rot(io_compiler);
+            if (r) return r;
+            pi++;
+            break;
+
+        case REX_TOKEN_CONCAT:
+            io_compiler->ast_top++;
+            r = rex_ast_rot(io_compiler);
+            if (r) return r;
+            break;
+
+        case REX_TOKEN_KLEEN:
+            branch = REX_OPCODE_BWP;
+            /*FALLTHROUGH*/
+        case REX_TOKEN_KLEEN_LAZY:
+                return REX_SYNTAX_ERROR;
+            if (o_prog)
+                o_prog[pi] = REX_INSTRUCTION(branch, pi+1);
+            REX_AST_PUSH_PRIMITIVE(io_compiler, uint32_t, pi);
+            REX_AST_PUSH_PRIMITIVE(io_compiler, uint32_t, 
+                REX_TOKEN_KLEEN_STAGE_1);
+            r = rex_ast_rot(io_compiler);
+            if (r) return r;
+            pi++;
+            break;
+
+        case REX_TOKEN_QUESTION:
+            branch = REX_OPCODE_BWP;
+            /*FALLTHROUGH*/
+        case REX_TOKEN_QUESTION_LAZY:
+            io_compiler->ast_top++;
+            if (o_prog)
+                o_prog[pi] = REX_INSTRUCTION(branch, 0);
+            REX_AST_PUSH_PRIMITIVE(io_compiler, uint32_t, pi);
+            REX_AST_PUSH_PRIMITIVE(io_compiler, uint32_t, 
+                REX_TOKEN_QUESTION_STAGE_1);
+            r = rex_ast_rot(io_compiler);
+            if (r) return r;
+            pi++;
+            break;
+
+        case REX_TOKEN_PLUS:
+            /*FALLTHROUGH*/
+        case REX_TOKEN_PLUS_LAZY:
+            REX_AST_PUSH_PRIMITIVE(io_compiler, uint32_t, pi);
+            REX_AST_PUSH_PRIMITIVE(
+                io_compiler,
+                uint32_t, 
+                REX_TOKEN_PLUS_STAGE_1 + *io_compiler->ast_top - REX_TOKEN_PLUS
+            );
+            io_compiler->ast_top++;
+            r = rex_ast_rot(io_compiler);
+            if (r) return r;
+            pi++;
+            break;
+
+        case REX_TOKEN_ALTERNATION_STAGE_1:
+            io_compiler->ast_top++;
+            REX_AST_OVERFLOW_CHECK(io_compiler, sizeof(uint32_t));
+            lookback = *(uint32_t *)io_compiler->ast_top;
+            io_compiler->ast_top+= sizeof(uint32_t);
+            if (pi+1 < REX_PC_MAX && o_prog)
+                o_prog[lookback] |= pi+1;
+            REX_AST_PUSH_PRIMITIVE(io_compiler, uint32_t, pi);
+            REX_AST_PUSH_PRIMITIVE(io_compiler, uint32_t, 
+                REX_TOKEN_ALTERNATION_STAGE_2);
+            if (o_prog)
+                o_prog[pi] = REX_INSTRUCTION(REX_OPCODE_J, 0);
+            r = rex_ast_rot(io_compiler);
+            if (r) return r;
+            pi++;
+            break;
+
+        case REX_TOKEN_ALTERNATION_STAGE_2:
+            io_compiler->ast_top++;
+            REX_AST_OVERFLOW_CHECK(io_compiler, sizeof(uint32_t));
+            lookback = *(uint32_t *)io_compiler->ast_top;
+            io_compiler->ast_top+= sizeof(uint32_t);
+            if (o_prog)
+                o_prog[lookback] |= pi+1;
+            break;
+            
+        case REX_TOKEN_QUESTION_STAGE_1:
+            io_compiler->ast_top++;
+            REX_AST_OVERFLOW_CHECK(io_compiler, sizeof(uint32_t));
+            lookback = *(uint32_t *)io_compiler->ast_top;
+            io_compiler->ast_top+= sizeof(uint32_t);
+            if (o_prog)
+                o_prog[lookback] |= pi+1;
+            break;
+            
+        case REX_TOKEN_KLEEN_STAGE_1:
+            io_compiler->ast_top++;
+            REX_AST_OVERFLOW_CHECK(io_compiler, sizeof(uint32_t));
+            lookback = *(uint32_t *)io_compiler->ast_top;
+            io_compiler->ast_top+= sizeof(uint32_t);
+            if (o_prog)
+            {
+                o_prog[lookback] |=pi+1;
+                o_prog[pi] = REX_INSTRUCTION(REX_OPCODE_J, lookback);
+            }
+            pi++;
+            break;
+
+        case REX_TOKEN_PLUS_STAGE_1:
+            branch = REX_OPCODE_BWP;
+            /*FALLTHROUGH*/
+        case REX_TOKEN_PLUS_LAZY_STAGE_1:
+            io_compiler->ast_top++;
+            REX_AST_OVERFLOW_CHECK(io_compiler, sizeof(uint32_t));
+            lookback = *(uint32_t *)io_compiler->ast_top;
+            io_compiler->ast_top+= sizeof(uint32_t);
+            if (o_prog)
+                o_prog[pi] = REX_INSTRUCTION(branch, lookback);
+            pi++;
+            break;
+        }
+    }
+    return 0; 
 }
 
 
