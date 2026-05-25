@@ -1364,16 +1364,14 @@ rex_compile_charset(
         return 1;
     }
 }
-/* Places AST into the bottom of memory as a stack
+/* Places AST into the top of memory as a stack
  * Tokens are each one uint8_t
  * Following a charset token is the charset string
+ *
+ * The output stack grows backward from the top of memory.
+ * This avoids a backward decode of utf8.
  */
 
-/* TODO:
- * put the ast stack on the top of memory this will require less ast rots
- *
- * will it?
- */
 
 static inline int
 rex_build_ast(
@@ -1437,8 +1435,7 @@ rex_build_ast(
             break;
         } 
         /* Handle Implicit Concat Using Lookahead */
-        rex_parse_token(i_str+l+i, i_len - l - i, &tok_tmp);
-        switch(tok)
+        if (rex_parse_token(i_str+l+i, i_len - l - i, &tok_tmp)) switch(tok)
         {
         case REX_TOKEN_PLUS:
         case REX_TOKEN_PLUS_LAZY:
