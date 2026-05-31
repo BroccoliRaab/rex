@@ -515,11 +515,12 @@ typedef enum rex_token_e rex_token_t;
     X(REX_TOKEN_QUESTION_LAZY) \
     X(REX_TOKEN_PLUS) \
     X(REX_TOKEN_PLUS_LAZY) \
-    X(REX_TOKEN_ALTERNATION_INFIX) \
-    X(REX_TOKEN_ALTERNATION_SUFFIX) \
-    X(REX_TOKEN_QUESTION_SUFFIX) \
-    X(REX_TOKEN_KLEEN_SUFFIX) \
-    X(REX_TOKEN_PLUS_SUFFIX)
+    X(REX_TOKEN_ALTERNATION_STAGE_1) \
+    X(REX_TOKEN_ALTERNATION_STAGE_2) \
+    X(REX_TOKEN_QUESTION_STAGE_1) \
+    X(REX_TOKEN_KLEEN_STAGE_1) \
+    X(REX_TOKEN_PLUS_STAGE_1) \
+    X(REX_TOKEN_PLUS_LAZY_STAGE_1)
 
 #define REX_UTF8_IS_MULTIBYTE(c)                        ((c) & 0x80)
 #define REX_UTF8_MULTIBYTE_MIN                          (2)
@@ -1254,7 +1255,7 @@ rex_compile_mcset(
                 &r0, &r1
             );
         }
-        if (r0 < REX_MAX_UNICODE_VAL) break;
+        if (r0 > REX_MAX_UNICODE_VAL) break;
         if (r0 == r1)
         {
             if (o_prog) 
@@ -1356,7 +1357,7 @@ rex_compile_charset(
     /* Don't need to check for reserved character because the set is valid */
     /*FALLTHROUGH */
     default:
-        if(*o_prog)
+        if(o_prog)
             *o_prog = REX_INSTRUCTION(REX_OPCODE_HNIA, *cp);
         return 1;
     }
@@ -1409,14 +1410,14 @@ rex_build_ast(
             op_stack[op_stack_sz++] = tok;
             break;
         case REX_TOKEN_RPAREN:
-            for (;tok != REX_TOKEN_LPAREN;)
+            do 
             {
                 if(op_stack_sz == 0) return REX_SYNTAX_ERROR;
                 if (op_stack + op_stack_sz >= ast_top)
                     return REX_OUT_OF_MEMORY;
                 /* POP AND EMIT TOP OF OPSTACK*/
                 *--ast_top = op_stack[--op_stack_sz];
-            }
+            }while(*ast_top != REX_TOKEN_LPAREN);
             break;
         default:
             /* WHILE STACK_TOP PRECEDENCE > TOK */
@@ -1497,7 +1498,14 @@ rex_ast_count(
     case REX_TOKEN_RPAREN:
     case REX_TOKEN_CHARSET:
         return 0;
-    //TODO: SUFFIX/INFIX compile tokens
+    case REX_TOKEN_ALTERNATION_STAGE_1:
+
+    case REX_TOKEN_ALTERNATION_STAGE_2:
+    case REX_TOKEN_QUESTION_STAGE_1:
+    case REX_TOKEN_KLEEN_STAGE_1:
+    case REX_TOKEN_PLUS_STAGE_1:
+    case REX_TOKEN_PLUS_LAZY_STAGE_1:
+        return 1 + sizeof(uint32_t);
     default:
         if (!leaves) return 0;
         j = rex_parse_charset((const char *) i_ast+i, SIZE_MAX);
@@ -1581,6 +1589,7 @@ rex_ast_compile(
     uint32_t mi = 2;
     uint32_t pi, lookback;
     uint8_t branch;
+    size_t pl, l, sz = 0;
 
 
     pi = 0;
@@ -1589,17 +1598,25 @@ rex_ast_compile(
         branch = REX_OPCODE_B;
         switch((rex_token_t) *io_compiler->ast_top)
         {
+        default:
+            l = rex_parse_charset((char*)io_compiler->ast_top,ast_floor - io_compiler->ast_top);
+            if (!l) return REX_SYNTAX_ERROR;
+            pl = rex_compile_charset((char*)io_compiler->ast_top, o_prog+pi); 
+            if (!pl) return REX_SYNTAX_ERROR;
+            pi+=pl;
+            io_compiler->ast_top+=l;
+            break;
         case REX_TOKEN_CHARSET:
             return REX_SYNTAX_ERROR;
 
         case REX_TOKEN_RPAREN:
-            if (o_prog) o_prog[pi] = REX_INSTRUCTION(REX_OPCODE_SS, mi);
+            if (o_prog) o_prog[pi++] = REX_INSTRUCTION(REX_OPCODE_SS, mi);
             mi++;
             io_compiler->ast_top++;
             break;
 
         case REX_TOKEN_LPAREN:
-            if (o_prog) o_prog[pi] = REX_INSTRUCTION(REX_OPCODE_SS, mi);
+            if (o_prog) o_prog[pi++] = REX_INSTRUCTION(REX_OPCODE_SS, mi);
             mi++;
             REX_AST_PUSH_PRIMITIVE(io_compiler, uint8_t, REX_TOKEN_RPAREN);
             r = rex_ast_rot(io_compiler);
@@ -1616,7 +1633,7 @@ rex_ast_compile(
             if (o_prog)
                 o_prog[pi] = REX_INSTRUCTION(REX_OPCODE_B, 0);
             REX_AST_PUSH_PRIMITIVE(io_compiler, uint32_t, pi);
-            REX_AST_PUSH_PRIMITIVE(io_compiler, uint32_t, 
+            REX_AST_PUSH_PRIMITIVE(io_compiler, uint8_t, 
                 REX_TOKEN_ALTERNATION_STAGE_1);
             r = rex_ast_rot(io_compiler);
             if (r) return r;
@@ -1629,15 +1646,15 @@ rex_ast_compile(
             if (r) return r;
             break;
 
-        case REX_TOKEN_KLEEN:
+        case REX_TOKEN_KLEEN_LAZY:
             branch = REX_OPCODE_BWP;
             /*FALLTHROUGH*/
-        case REX_TOKEN_KLEEN_LAZY:
-                return REX_SYNTAX_ERROR;
+        case REX_TOKEN_KLEEN:
+            io_compiler->ast_top++;
             if (o_prog)
-                o_prog[pi] = REX_INSTRUCTION(branch, pi+1);
+                o_prog[pi] = REX_INSTRUCTION(branch, 0);
             REX_AST_PUSH_PRIMITIVE(io_compiler, uint32_t, pi);
-            REX_AST_PUSH_PRIMITIVE(io_compiler, uint32_t, 
+            REX_AST_PUSH_PRIMITIVE(io_compiler, uint8_t, 
                 REX_TOKEN_KLEEN_STAGE_1);
             r = rex_ast_rot(io_compiler);
             if (r) return r;
@@ -1652,7 +1669,7 @@ rex_ast_compile(
             if (o_prog)
                 o_prog[pi] = REX_INSTRUCTION(branch, 0);
             REX_AST_PUSH_PRIMITIVE(io_compiler, uint32_t, pi);
-            REX_AST_PUSH_PRIMITIVE(io_compiler, uint32_t, 
+            REX_AST_PUSH_PRIMITIVE(io_compiler, uint8_t, 
                 REX_TOKEN_QUESTION_STAGE_1);
             r = rex_ast_rot(io_compiler);
             if (r) return r;
@@ -1665,7 +1682,7 @@ rex_ast_compile(
             REX_AST_PUSH_PRIMITIVE(io_compiler, uint32_t, pi);
             REX_AST_PUSH_PRIMITIVE(
                 io_compiler,
-                uint32_t, 
+                uint8_t, 
                 REX_TOKEN_PLUS_STAGE_1 + *io_compiler->ast_top - REX_TOKEN_PLUS
             );
             io_compiler->ast_top++;
@@ -1736,6 +1753,7 @@ rex_ast_compile(
             break;
         }
     }
+    if (o_prog) o_prog[pi++] = REX_INSTRUCTION(REX_OPCODE_M, 0);
     return 0; 
 }
 

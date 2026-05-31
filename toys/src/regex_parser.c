@@ -31,21 +31,22 @@ main(void)
             puts("Parse Failure");
             continue;
         }
-        for (data = c.ctx.ast_ctx.ast_top; data < mem + 1024;)
+        for (data = c.ast_top; data < mem + 1024;)
         {
             switch(*data)
             {
                 REX_TOKEN_X(TOKEN_CASE);
                 default:
-                l = rex_parse_utf8_codepoint(data,SIZE_MAX, NULL),
+                l = rex_parse_charset((char *)data,SIZE_MAX);
+                if (!l) break;
                 fwrite(
                     data,
                     1,
                     l,
                     stdout
                 );
-                putchar('\n');
                 data+=l;
+                putchar('\n');
                 break;
             }
         }
