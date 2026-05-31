@@ -1588,7 +1588,7 @@ rex_ast_compile(
     int r;
     uint32_t mi = 2;
     uint32_t pi, lookback;
-    uint8_t branch;
+    uint8_t branch, plus_lazy;
     size_t pl, l, sz = 0;
 
 
@@ -1596,6 +1596,7 @@ rex_ast_compile(
     while (io_compiler->ast_top < ast_floor) 
     {
         branch = REX_OPCODE_B;
+        plus_lazy = REX_TOKEN_PLUS_STAGE_1;
         switch((rex_token_t) *io_compiler->ast_top)
         {
         default:
@@ -1676,19 +1677,20 @@ rex_ast_compile(
             pi++;
             break;
 
-        case REX_TOKEN_PLUS:
-            /*FALLTHROUGH*/
+            
         case REX_TOKEN_PLUS_LAZY:
+            plus_lazy = REX_TOKEN_PLUS_LAZY_STAGE_1; 
+            /*FALLTHROUGH*/
+        case REX_TOKEN_PLUS:
+            io_compiler->ast_top++;
             REX_AST_PUSH_PRIMITIVE(io_compiler, uint32_t, pi);
             REX_AST_PUSH_PRIMITIVE(
                 io_compiler,
                 uint8_t, 
-                REX_TOKEN_PLUS_STAGE_1 + *io_compiler->ast_top - REX_TOKEN_PLUS
+                plus_lazy
             );
-            io_compiler->ast_top++;
             r = rex_ast_rot(io_compiler);
             if (r) return r;
-            pi++;
             break;
 
         case REX_TOKEN_ALTERNATION_STAGE_1:
