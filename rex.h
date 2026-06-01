@@ -1625,10 +1625,8 @@ rex_ast_compile(
 
         case REX_TOKEN_ALTERNATION:
             io_compiler->ast_top++;
-            r = rex_ast_rot(io_compiler);
-            if (r) return r;
             if (o_prog)
-                o_prog[pi] = REX_INSTRUCTION(REX_OPCODE_B, 0);
+                o_prog[pi] = REX_INSTRUCTION(REX_OPCODE_BWP, 0);
             REX_AST_PUSH_PRIMITIVE(io_compiler, uint32_t, pi);
             REX_AST_PUSH_PRIMITIVE(io_compiler, uint8_t, 
                 REX_TOKEN_ALTERNATION_STAGE_1);
@@ -1702,7 +1700,7 @@ rex_ast_compile(
             if (pi+1 < REX_PC_MAX && o_prog)
                 o_prog[lookback] |= pi+1;
             REX_AST_PUSH_PRIMITIVE(io_compiler, uint32_t, pi);
-            REX_AST_PUSH_PRIMITIVE(io_compiler, uint32_t, 
+            REX_AST_PUSH_PRIMITIVE(io_compiler, uint8_t, 
                 REX_TOKEN_ALTERNATION_STAGE_2);
             if (o_prog)
                 o_prog[pi] = REX_INSTRUCTION(REX_OPCODE_J, 0);
@@ -1717,7 +1715,7 @@ rex_ast_compile(
             lookback = *(uint32_t *)io_compiler->ast_top;
             io_compiler->ast_top+= sizeof(uint32_t);
             if (o_prog)
-                o_prog[lookback] |= pi+1;
+                o_prog[lookback] |= pi;
             break;
             
         case REX_TOKEN_QUESTION_STAGE_1:
@@ -1726,7 +1724,7 @@ rex_ast_compile(
             lookback = *(uint32_t *)io_compiler->ast_top;
             io_compiler->ast_top+= sizeof(uint32_t);
             if (o_prog)
-                o_prog[lookback] |= pi+1;
+                o_prog[lookback] |= pi;
             break;
             
         case REX_TOKEN_KLEEN_STAGE_1:
