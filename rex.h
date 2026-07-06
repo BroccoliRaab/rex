@@ -1625,8 +1625,10 @@ rex_ast_compile(
 
         case REX_TOKEN_ALTERNATION:
             io_compiler->ast_top++;
+            r = rex_ast_rot(io_compiler);
+            if (r) return r;
             if (o_prog)
-                o_prog[pi] = REX_INSTRUCTION(REX_OPCODE_BWP, 0);
+                o_prog[pi] = REX_INSTRUCTION(REX_OPCODE_B, 0);
             REX_AST_PUSH_PRIMITIVE(io_compiler, uint32_t, pi);
             REX_AST_PUSH_PRIMITIVE(io_compiler, uint8_t, 
                 REX_TOKEN_ALTERNATION_STAGE_1);
@@ -1959,140 +1961,140 @@ rex_vm_exec_thread(
     
     rex_instruction_t inst;
     uint32_t imm;
-            io_vm->cthread = rex_vm_thread_by_index(&io_vm->clist, io_vm->ti);
-            io_vm->pc = *(uint32_t*) io_vm->cthread;
+    io_vm->cthread = rex_vm_thread_by_index(&io_vm->clist, io_vm->ti);
+    io_vm->pc = *(uint32_t*) io_vm->cthread;
 
-        /* Some instruction sequences are handled
-         * as if they were a single instruction
-         */
-        /* TODO: Decide if it makes sense to refactor this into a while loop */
-        thread_continue:
-            inst = io_vm->prog[io_vm->pc];
+/* Some instruction sequences are handled
+ * as if they were a single instruction
+ */
+/* TODO: Decide if it makes sense to refactor this into a while loop */
+thread_continue:
+    inst = io_vm->prog[io_vm->pc];
 
-            imm = REX_IMM_FROM_INST(inst);
-            switch (REX_OP_FROM_INST(inst))
-            {
-            case REX_OPCODE_HI:
-                if (io_vm->cp == imm) break;
-                io_vm->pc++;
-                goto thread_continue;
-            case REX_OPCODE_HIA:
-                if (io_vm->cp == imm) break;
-                rex_vm_threadlist_push(
-                    &io_vm->nlist, 
-                    REX_MARKERS(io_vm->cthread),
-                    io_vm->pc + 1); 
-                rex_vm_thread_expand(
-                    &io_vm->nlist, 
-                    io_vm->nlist.thread_count - 1,
-                    io_vm->prog,
-                    io_vm->string + io_vm->cpi + io_vm->l
-                );
+    imm = REX_IMM_FROM_INST(inst);
+    switch (REX_OP_FROM_INST(inst))
+    {
+    case REX_OPCODE_HI:
+        if (io_vm->cp == imm) break;
+        io_vm->pc++;
+        goto thread_continue;
+    case REX_OPCODE_HIA:
+        if (io_vm->cp == imm) break;
+        rex_vm_threadlist_push(
+            &io_vm->nlist, 
+            REX_MARKERS(io_vm->cthread),
+            io_vm->pc + 1); 
+        rex_vm_thread_expand(
+            &io_vm->nlist, 
+            io_vm->nlist.thread_count - 1,
+            io_vm->prog,
+            io_vm->string + io_vm->cpi + io_vm->l
+        );
+        break;
+    case REX_OPCODE_HNI:
+        if (io_vm->cp != imm) break;
+        io_vm->pc++;
+        goto thread_continue;
+    case REX_OPCODE_HNIA:
+        if (io_vm->cp != imm) break;
+        rex_vm_threadlist_push(
+            &io_vm->nlist, 
+            REX_MARKERS(io_vm->cthread),
+            io_vm->pc + 1); 
+        rex_vm_thread_expand(
+            &io_vm->nlist, 
+            io_vm->nlist.thread_count - 1,
+            io_vm->prog,
+            io_vm->string + io_vm->cpi + io_vm->l
+        );
+        break;
+    case REX_OPCODE_HR:
+        if (io_vm->cp >= imm && io_vm->cp <= io_vm->rcp1) break;
+        io_vm->pc++;
+        goto thread_continue;
+    case REX_OPCODE_HRA:
+        if (io_vm->cp >= imm && io_vm->cp <= io_vm->rcp1) break;
+        rex_vm_threadlist_push(
+            &io_vm->nlist, 
+            REX_MARKERS(io_vm->cthread),
+            io_vm->pc + 1); 
+        rex_vm_thread_expand(
+            &io_vm->nlist, 
+            io_vm->nlist.thread_count - 1,
+            io_vm->prog,
+            io_vm->string + io_vm->cpi + io_vm->l
+        );
+        break;
+    case REX_OPCODE_AWB:
+        if (io_vm->prev_word == REX_ISWORD(io_vm->cp)) break;
+        io_vm->pc = ++*(uint32_t *)io_vm->cthread;
+        rex_vm_thread_expand(
+            &io_vm->clist, 
+           io_vm->ti,
+            io_vm->prog,
+            io_vm->string + io_vm->cpi + io_vm->l
+        );
+        goto thread_continue;
+    case REX_OPCODE_ANWB:
+        if (io_vm->prev_word != REX_ISWORD(io_vm->cp)) break;
+        io_vm->pc = ++*(uint32_t *)io_vm->cthread;
+        rex_vm_thread_expand(
+            &io_vm->clist, 
+           io_vm->ti,
+            io_vm->prog,
+            io_vm->string + io_vm->cpi + io_vm->l
+        );
+        goto thread_continue;
+    case REX_OPCODE_AE:
+        if (io_vm->string_sz - io_vm->cpi != 0)
+            if (io_vm->string[io_vm->cpi] != 0)
                 break;
-            case REX_OPCODE_HNI:
-                if (io_vm->cp != imm) break;
-                io_vm->pc++;
-                goto thread_continue;
-            case REX_OPCODE_HNIA:
-                if (io_vm->cp != imm) break;
-                rex_vm_threadlist_push(
-                    &io_vm->nlist, 
-                    REX_MARKERS(io_vm->cthread),
-                    io_vm->pc + 1); 
-                rex_vm_thread_expand(
-                    &io_vm->nlist, 
-                    io_vm->nlist.thread_count - 1,
-                    io_vm->prog,
-                    io_vm->string + io_vm->cpi + io_vm->l
-                );
-                break;
-            case REX_OPCODE_HR:
-                if (io_vm->cp >= imm && io_vm->cp <= io_vm->rcp1) break;
-                io_vm->pc++;
-                goto thread_continue;
-            case REX_OPCODE_HRA:
-                if (io_vm->cp >= imm && io_vm->cp <= io_vm->rcp1) break;
-                rex_vm_threadlist_push(
-                    &io_vm->nlist, 
-                    REX_MARKERS(io_vm->cthread),
-                    io_vm->pc + 1); 
-                rex_vm_thread_expand(
-                    &io_vm->nlist, 
-                    io_vm->nlist.thread_count - 1,
-                    io_vm->prog,
-                    io_vm->string + io_vm->cpi + io_vm->l
-                );
-                break;
-            case REX_OPCODE_AWB:
-                if (io_vm->prev_word == REX_ISWORD(io_vm->cp)) break;
-                io_vm->pc = ++*(uint32_t *)io_vm->cthread;
-                rex_vm_thread_expand(
-                    &io_vm->clist, 
-                   io_vm->ti,
-                    io_vm->prog,
-                    io_vm->string + io_vm->cpi + io_vm->l
-                );
-                goto thread_continue;
-            case REX_OPCODE_ANWB:
-                if (io_vm->prev_word != REX_ISWORD(io_vm->cp)) break;
-                io_vm->pc = ++*(uint32_t *)io_vm->cthread;
-                rex_vm_thread_expand(
-                    &io_vm->clist, 
-                   io_vm->ti,
-                    io_vm->prog,
-                    io_vm->string + io_vm->cpi + io_vm->l
-                );
-                goto thread_continue;
-            case REX_OPCODE_AE:
-                if (io_vm->string_sz - io_vm->cpi != 0)
-                    if (io_vm->string[io_vm->cpi] != 0)
-                        break;
-                io_vm->pc = ++*(uint32_t *)io_vm->cthread;
-                rex_vm_thread_expand(
-                    &io_vm->clist, 
-                   io_vm->ti,
-                    io_vm->prog,
-                    io_vm->string + io_vm->cpi + io_vm->l
-                );
-                goto thread_continue;
-            case REX_OPCODE_AS:
-                if (io_vm->cpi != 0) break;
-                io_vm->pc = ++*(uint32_t *)io_vm->cthread;
-                rex_vm_thread_expand(
-                    &io_vm->clist, 
-                   io_vm->ti,
-                    io_vm->prog,
-                    io_vm->string + io_vm->cpi + io_vm->l
-                );
-                goto thread_continue;
-            case REX_OPCODE_LR:
-                io_vm->rcp1 = imm;
-                io_vm->pc++;
-                goto thread_continue;
-            case REX_OPCODE_SS:
-            case REX_OPCODE_B:
-            case REX_OPCODE_BWP:
-            case REX_OPCODE_J:
-                /* Handled by thread expand */
-                /*FALLTHROUGH*/
-            default:
-                return REX_BAD_INSTRUCTION;
+        io_vm->pc = ++*(uint32_t *)io_vm->cthread;
+        rex_vm_thread_expand(
+            &io_vm->clist, 
+           io_vm->ti,
+            io_vm->prog,
+            io_vm->string + io_vm->cpi + io_vm->l
+        );
+        goto thread_continue;
+    case REX_OPCODE_AS:
+        if (io_vm->cpi != 0) break;
+        io_vm->pc = ++*(uint32_t *)io_vm->cthread;
+        rex_vm_thread_expand(
+            &io_vm->clist, 
+           io_vm->ti,
+            io_vm->prog,
+            io_vm->string + io_vm->cpi + io_vm->l
+        );
+        goto thread_continue;
+    case REX_OPCODE_LR:
+        io_vm->rcp1 = imm;
+        io_vm->pc++;
+        goto thread_continue;
+    case REX_OPCODE_SS:
+    case REX_OPCODE_B:
+    case REX_OPCODE_BWP:
+    case REX_OPCODE_J:
+        /* Handled by thread expand */
+        /*FALLTHROUGH*/
+    default:
+        return REX_BAD_INSTRUCTION;
 
-            case REX_OPCODE_M:
-                io_vm->match = 1;
-                if (io_vm->clist.marker_count > 1)
-                    REX_MARKERS(io_vm->cthread)[1] = io_vm->string + io_vm->cpi;
-                for (io_vm->mi = 0; io_vm->mi < io_vm->clist.marker_count; io_vm->mi+=2)
-                    io_vm->matches[io_vm->mi/2] = 
-                        (rex_match_t){
-                            REX_MARKERS(io_vm->cthread)[io_vm->mi],
-                            REX_MARKERS(io_vm->cthread)[io_vm->mi + 1] - REX_MARKERS(io_vm->cthread)[io_vm->mi]
-                    };
-                io_vm->ti = SIZE_MAX;
-                return REX_SUCESS;
-            } 
-            io_vm->ti++;
-            return REX_SUCESS;
+    case REX_OPCODE_M:
+        io_vm->match = 1;
+        if (io_vm->clist.marker_count > 1)
+            REX_MARKERS(io_vm->cthread)[1] = io_vm->string + io_vm->cpi;
+        for (io_vm->mi = 0; io_vm->mi < io_vm->clist.marker_count; io_vm->mi+=2)
+            io_vm->matches[io_vm->mi/2] = 
+                (rex_match_t){
+                    REX_MARKERS(io_vm->cthread)[io_vm->mi],
+                    REX_MARKERS(io_vm->cthread)[io_vm->mi + 1] - REX_MARKERS(io_vm->cthread)[io_vm->mi]
+            };
+        io_vm->ti = SIZE_MAX;
+        return REX_SUCESS;
+    } 
+    io_vm->ti++;
+    return REX_SUCESS;
 }
 
 
@@ -2243,7 +2245,7 @@ rex_vm_exec(
     if (r) return r;
 
     while (
-     ( (r = rex_vm_exec_step(io_vm))==0 && !io_vm->halted)
+        (r = rex_vm_exec_step(io_vm))==0 && !io_vm->halted
     );
     if (o_match_found) *o_match_found = io_vm->match;
 

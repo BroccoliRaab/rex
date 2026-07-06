@@ -74,7 +74,7 @@ main(int argc, char ** argv)
             puts("Execution Failure");
             continue;
         }
-        if (success)
+        if (success && matches[0].match_sz == strlen(line))
         {
             puts("MATCH!\n");
             for (i = 0; matches[i].match; i++)

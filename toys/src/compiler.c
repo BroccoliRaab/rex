@@ -47,11 +47,11 @@ main(void)
             switch(REX_OP_FROM_INST(prog[i])){
             #define REX_PRINT_INSTRUCTION(name, opcode) \
                 case opcode: \
-                printf("%s 0x%08x\n", #name, REX_IMM_FROM_INST(prog[i])); \
+                printf("0x%08lx %-8s0x%08x\n", i, #name, REX_IMM_FROM_INST(prog[i])); \
                 break;
             REX_ISA_X(REX_PRINT_INSTRUCTION);
             }
         }
-        printf("M 0x%08x\n\n", REX_IMM_FROM_INST(prog[i]));
+        printf("0x%08lx M       0x%08x\n\n", i, REX_IMM_FROM_INST(prog[i]));
     }
 }
