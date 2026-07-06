@@ -39,7 +39,6 @@ main(int argc, char ** argv)
         return r;
     }
     /* TODO: this needs to output a size*/
-    /* TODO: this needs to output how man submatches it contained */
     r = rex_ast_compile(
         &c,
         prog,
@@ -77,7 +76,7 @@ main(int argc, char ** argv)
         if (success && matches[0].match_sz == strlen(line))
         {
             puts("MATCH!\n");
-            for (i = 0; matches[i].match; i++)
+            for (i = 0; i < 16; i++)
             {
                 printf("[%lu] : ", i);
                 fwrite(matches[i].match, 1, matches[i].match_sz, stdout);

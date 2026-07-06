@@ -2168,6 +2168,8 @@ rex_vm_exec_init(
     o_vm->matches = o_matches;
     o_vm->matches_sz = i_matches_sz;
 
+    REX_MEMSET(o_matches, 0, sizeof(rex_match_t)*i_matches_sz);
+
     /* Can look back one byte as any valid unicode byte will return false */
     o_vm->prev_word = 
         o_vm->cpi == 0 ? 0 : REX_ISWORD(o_vm->string[o_vm->cpi - 1]);
