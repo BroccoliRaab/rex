@@ -1189,7 +1189,6 @@ static inline void rex_mcset_body_simplify_inverted(
 
     cur0 = *io_r0;
     cur1 = *io_r1;
-    /* TODO: This looks like an infinite loop. Fix or comment */
     for (;cur0 < REX_MAX_UNICODE_VAL;)
     {
         rex_mcset_body_simplify(
@@ -1197,9 +1196,6 @@ static inline void rex_mcset_body_simplify_inverted(
             &cur0,
             &cur1
         );
-        /* TODO:
-         * if this isn't true it loops forever?
-         * if its always true then the if block is pointless */
         if (REX_INTERSECTION_EXISTS(cur0, cur1, *io_r0, *io_r1))
         {
             if (*io_r0 < cur0)
@@ -1592,7 +1588,7 @@ rex_ast_compile(
     uint32_t mi = 2;
     uint32_t pi, lookback;
     uint8_t branch, plus_lazy;
-    size_t pl, l, sz = 0;
+    size_t pl, l;
 
 
     pi = 0;
@@ -1967,7 +1963,6 @@ rex_vm_exec_thread(
 /* Some instruction sequences are handled
  * as if they were a single instruction
  */
-/* TODO: Decide if it makes sense to refactor this into a while loop */
 thread_continue:
     inst = io_vm->prog[io_vm->pc];
 
