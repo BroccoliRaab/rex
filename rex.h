@@ -70,23 +70,6 @@
 
 /* INTERFACE */
 
-typedef struct rex_s rex_t;
-
-struct rex_s
-{
-    void * memory;
-    size_t memory_sz;
-};
-
-/* rex_t
- *
- * This contains the buffer used during compilation and execution.
- */
-
-
-
-#define REX_MAX_UNICODE_VAL (0x00FFFFFF)
-
 /* Error Code */
 #define REX_SUCESS                  (0)
 #define REX_OUT_OF_MEMORY           (1)
@@ -95,8 +78,98 @@ struct rex_s
 #define REX_ENCODING_ERROR          (4)
 #define REX_BAD_PARAM               (5)
 
-/* TYPES */
+typedef struct rex_s rex_t;
+typedef struct rex_stat_s rex_stat_t;
+
+/* Type for compiled regex bytecode */
 typedef uint32_t rex_instruction_t;
+
+/* rex_t
+ *
+ * This contains the buffer used during compilation and execution.
+ */
+
+struct rex_s
+{
+    void * memory;
+    size_t memory_sz;
+};
+
+/* rex_stat_t
+ *
+ * Contains information about the regex
+ *
+ * @field capture_groups
+ *  The number of submatches this regex can match
+ * @field compile_size
+ *  The size in bytes of the compiled regex bytecode
+ * @field memory_requirement
+ *  The memory required to perform a match against this regex,
+ *  assuming all submatches are captured
+ */
+struct rex_stat_s
+{
+    size_t capture_groups;
+    size_t compile_size;
+    size_t memory_requirement;
+};
+
+/* Reports information about the compiled regex before compilation
+ *
+ *
+ * @param i_regex
+ *  The Regex to compile
+ * @param i_regex_sz
+ *  The length of the regex in bytes. 
+ *  May be SIZE_MAX if i_regex is NULL terminated
+ * @param o_stat
+ *  The stat struct containing the information about the regex
+ *
+ */
+
+int
+rex_stat(
+    const char * const i_regex,
+    const size_t i_regex_sz,
+    rex_stat_t * const o_stat
+);
+/*
+ * Compiles the regex into bytecode
+ * 
+ * @param io_rex
+ *  The rex context to use for this compilation
+ * @param i_regex
+ *  The Regex to compile
+ * @param i_regex_sz
+ *  The length of the regex in bytes. 
+ *  May be SIZE_MAX if i_regex is NULL terminated
+ * @param o_prog 
+ *  The output buffer to write the compiled bytecode to.
+ * @param io_prog_sz
+ *  The size of the buffer. This function overwrites this value with the
+ *  actual compiled size of the regex.
+ *
+ *  Returns an error code.
+ *  Returns REX_SUCESS on Success.
+ *  Returns REX_BAD_PARAM if io_rex, i_regex, or io_prog_sz are NULL
+ *  Returns REX_OUT_OF_MEMORY if o_prog is not NULL and io_prog_sz 
+ *  is less than the required compile size
+ *
+ *  @Note If o_prog is NULL, io_prog_sz will be set with the required size
+ *  and this function will return REX_SUCESS;
+ */
+
+int
+rex_compile(
+    rex_t * io_rex,
+    const char * const i_regex,
+    const size_t i_regex_sz,
+    rex_instruction_t * o_prog,
+    size_t * io_prog_sz
+);
+
+
+
 
 /* TODO: 
  * x{n,m} reptition ( Not sure if this will change isa or generate more instructions or will be implemented at all 
@@ -110,7 +183,7 @@ typedef uint32_t rex_instruction_t;
  * Each thread has its own set of registers
  * Sequential thread execution allows prioritizing one code path over another
  * This priority determines match disambiguation rules and allows lazy matching
- * VM halts when all 
+ * VM halts when all whenever any thread finds a match or if none are found
  * The max thread count spawned for any program is equal to the amount of instructions in the program
  */
 
@@ -464,6 +537,8 @@ static const uint8_t rex_ascii_class[128] =
     0x2, 0x2, 0x2, 0x2, 0x2, 0x2, 0x2, 0x2, 0x2, 0x2, 0x2, 0x2, 0x2, 0x2, 0x2,
     0x2, 0x2, 0x2, 0x1, 0x1, 0x1, 0x0, 0x0,
 };
+
+#define REX_MAX_UNICODE_VAL (0x00FFFFFF)
 
 #define REX_ASCII_CLASS_RESERVED_MASK   (0x1)
 #define REX_ASCII_CLASS_WORD_MASK       (0x2)
@@ -2247,5 +2322,110 @@ rex_vm_exec(
     if (o_match_found) *o_match_found = io_vm->match;
 
     return r;
+}
+
+/* API FUNCTIONS */
+
+int
+rex_stat(
+    const char * const i_regex,
+    const size_t i_regex_sz,
+    rex_stat_t * const o_stat
+)
+{
+    size_t l, i, thread_sz;
+    rex_token_t tok;
+
+    if (!o_stat) return REX_BAD_PARAM;
+
+    REX_MEMSET(o_stat, 0, sizeof(rex_stat_t));
+    for (l = 0; l < i_regex_sz && i_regex[l]; l+=i) {
+        i = rex_parse_token(i_regex, i_regex_sz, &tok);
+        if (i == 0) return REX_SYNTAX_ERROR;
+
+        switch(tok)
+        {
+        case REX_TOKEN_CHARSET:
+            o_stat->compile_size += rex_compile_charset(i_regex + l, NULL);
+            break;
+        case REX_TOKEN_LPAREN:
+            o_stat->capture_groups++;
+            /* FALLTHROUGH */
+        case REX_TOKEN_PLUS:
+        case REX_TOKEN_PLUS_LAZY:
+        case REX_TOKEN_QUESTION:
+        case REX_TOKEN_QUESTION_LAZY:
+        case REX_TOKEN_RPAREN:
+            o_stat->compile_size++;
+            break;
+
+        case REX_TOKEN_KLEEN:
+        case REX_TOKEN_KLEEN_LAZY:
+        case REX_TOKEN_ALTERNATION:
+            o_stat->compile_size+= 2;
+            break;
+
+        case REX_TOKEN_CONCAT:
+        case REX_TOKEN_SUBMATCH_STAGE_1:
+        case REX_TOKEN_ALTERNATION_STAGE_1:
+        case REX_TOKEN_ALTERNATION_STAGE_2:
+        case REX_TOKEN_QUESTION_STAGE_1:
+        case REX_TOKEN_KLEEN_STAGE_1:
+        case REX_TOKEN_PLUS_STAGE_1:
+        case REX_TOKEN_PLUS_LAZY_STAGE_1:
+        default:
+            return REX_SYNTAX_ERROR;
+        }
+    }
+    thread_sz = o_stat->capture_groups * 2 * sizeof(char *) + sizeof(uint32_t);
+    o_stat->memory_requirement = thread_sz * o_stat->compile_size * 2;
+    
+    return 0;
+}
+
+int
+rex_compile(
+    rex_t * io_rex,
+    const char * const i_regex,
+    const size_t i_regex_sz,
+    rex_instruction_t * o_prog,
+    size_t * io_prog_sz
+)
+{
+    int r;
+    rex_stat_t stat;
+    rex_compiler_t compiler;
+    size_t tmp_sz;
+    /* TODO:
+     * API functions should have more descriptive errors */
+    r =rex_stat(i_regex, i_regex_sz, &stat);
+    if (r) return r;
+
+    /* Set io_prog_sz. Exit if o_prog is NULL */
+    tmp_sz = *io_prog_sz;
+    *io_prog_sz = stat.compile_size;
+    if (!o_prog) return 0;
+    if (stat.compile_size > tmp_sz) 
+        return REX_OUT_OF_MEMORY;
+    
+    /* Build syntax tree */
+    compiler.memory = io_rex->memory;
+    compiler.memory_sz = io_rex->memory_sz;
+
+    r = rex_build_ast(
+        i_regex,
+        i_regex_sz,
+        &compiler
+    );
+    if (r) return r;
+
+    r = rex_ast_compile(
+        &compiler,
+        o_prog,
+        *io_prog_sz
+    );
+    if (r) return r;
+
+    return 0;
 }
 
